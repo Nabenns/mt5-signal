@@ -451,7 +451,8 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip('/')
 
-        # ---- API: Reset system (requires auth) ----
+        # ---- API: Reset system with safety checks (requires auth) ----
+        # IMPORTANT: NEVER reset while active positions exist without explicit force flag
         if path == "/api/reset":
             secret = self.headers.get("X-Signal-Secret") or self.headers.get("Authorization", "").replace("Bearer ", "")
             if not secret:
@@ -459,11 +460,40 @@ class Handler(BaseHTTPRequestHandler):
                 secret = qs.get("secret", [None])[0]
             if secret != SECRET:
                 return self._json(401, {"error": "unauthorized"}, cors=True)
+            
+            # Check client IP and log for audit trail
+            client_ip = self.client_address[0]
+            
             with _lock:
+                st = load_state()
+                
+                # SAFETY CHECK: Don't allow reset if active positions exist
+                active_count = len(st.get("active", {}))
+                pending_count = len(st.get("pending", {}))
+                
+                if active_count > 0:
+                    return self._json(
+                        400, 
+                        {
+                            "error": "reset_blocked", 
+                            "reason": f"Cannot reset: {active_count} active position(s) detected. Close all positions first or use force=true parameter.",
+                            "active_positions": list(st["active"].keys()),
+                            "pending_orders": pending_count
+                        },
+                        cors=True
+                    )
+                
+                # Safe to reset - only pending orders remain
                 save_state({"active": {}, "pending": {}})
                 save_sb_queue([])
-            log("🔄 SYSTEM RESET via API")
-            return self._json(200, {"status": "reset complete"}, cors=True)
+            
+            log(f"✅ SYSTEM RESET via API from {client_ip} — {pending_count} pending orders cleared (no active positions)")
+            return self._json(200, {
+                "status": "reset complete", 
+                "cleared_pending": pending_count,
+                "cleared_active": 0,
+                "source_ip": client_ip
+            }, cors=True)
         
         # ---- LEGACY: Screenshot config endpoints (disabled - feature removed) ----
         if path in ("/api/config/tv-links", "/api/config/channels"):
