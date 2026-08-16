@@ -509,7 +509,22 @@ _started_at = time.time()
 
 def main():
     load_config()
-    load_state()
+    
+    # Auto-detect dirty state file and warn if exists from long ago
+    if os.path.exists(STATE_FILE):
+        stat = os.stat(STATE_FILE)
+        age_hours = (time.time() - stat.st_mtime) / 3600
+        if age_hours > 2:  # lebih dari 2 jam
+            log(f"⚠️ Old state file detected ({age_hours:.1f}h ago)")
+            choice = input("Delete old state? (y/n): ")
+            if choice.lower() == 'y':
+                os.remove(STATE_FILE)
+                log("✅ State deleted")
+            else:
+                log("ℹ️ Keeping old state")
+    
+    _state = {"seen_deals": {}, "pos_state": {}, "vps_fail_streak": 0}
+    save_state()
 
     log("=" * 60)
     log("🚀 MT5 Signal Detector v2 (FULL PYTHON, no EA) started")
