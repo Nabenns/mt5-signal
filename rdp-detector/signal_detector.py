@@ -53,10 +53,6 @@ def get_remote_config_url():
 CONFIG = {}
 
 
-def get_remote_config_url():
-    return CONFIG.get("receiver_url", "").rstrip("/") + "/api/config/detector"
-
-
 def load_config():
     global CONFIG
     if not os.path.exists(CONFIG_FILE):
