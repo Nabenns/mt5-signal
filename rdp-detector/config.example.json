@@ -1,12 +1,16 @@
 {
-  "login": 12345678,
-  "password": "KATA_SANDI_LO_DISINI",
-  "server": "Broker-Server-Name",
-  "terminal_path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
+  "mt5": {
+    "login": 12345678,
+    "password": "KATA_SANDI_LO_DISINI",
+    "server": "Broker-Server-Name",
+    "terminal_path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
+  },
   "receiver_url": "https://hirmes.bensserver.cloud/api/signal",
   "secret": "***ganti_dengan_secret_lo___dari_.env___RECEIVER_SECRET***",
-  "poll_interval": 1.0,
-  "health_interval": 60,
-  "startup_seed_minutes": 5,
-  "notify_restart": true
+  "settings": {
+    "poll_interval": 1.0,
+    "health_interval": 60,
+    "startup_seed_minutes": 5,
+    "notify_restart": true
+  }
 }

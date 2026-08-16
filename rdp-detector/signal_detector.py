@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MT5 Signal Detector v1 — FULL PYTHON pengganti EA
+MT5 Signal Detector v2 — FULL PYTHON pengganti EA
 ====================================================
 Jalan di RDP Windows. Gantikan SignalRelay.mq5 total (EA gausah dipasang).
 
@@ -10,6 +10,7 @@ Fitur:
 3. 📡 Detector    — poll deals & positions tiap 1 detik (delay ±1 detik)
 4. ❤️ Health      — cek berkala: terminal, koneksi broker, tick freshness, VPS
 5. 📤 Sender      — POST sinyal ke receiver VPS (format SAMA persis dengan EA)
+6. 🌐 Config API  — pull config from VPS every 30s, auto-apply changes
 
 Setup di RDP:
 1. pip install MetaTrader5 requests
@@ -24,7 +25,6 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone, timedelta
-import requests
 
 try:
     import MetaTrader5 as mt5
@@ -32,15 +32,13 @@ except ImportError:
     print("❌ Library MetaTrader5 belum install. Jalankan: pip install MetaTrader5")
     sys.exit(1)
 
+import requests
+
 BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE, "config.json")
-REMOTE_CONFIG_URL = CONFIG.get("receiver_url", "").rstrip("/") + "/api/config/detector"
-LOCAL_REMOTE_URL = CONFIG.get("local_receiver_url", "")  # optional for local testing
-SECRET = CONFIG["secret"]
 STATE_FILE = os.path.join(BASE, "detector_state.json")
 LOG_FILE = os.path.join(BASE, "detector.log")
 HEALTH_FILE = os.path.join(BASE, "health.json")
-CONFIG_POLL_INTERVAL = CONFIG["settings"]["config_poll_interval"]
 
 WIB = timezone(timedelta(hours=7))
 
@@ -48,6 +46,10 @@ WIB = timezone(timedelta(hours=7))
 # CONFIG
 # ============================================================
 CONFIG = {}
+
+
+def get_remote_config_url():
+    return CONFIG.get("receiver_url", "").rstrip("/") + "/api/config/detector"
 
 
 def load_config():
@@ -58,11 +60,24 @@ def load_config():
         sys.exit(1)
     with open(CONFIG_FILE, encoding="utf-8") as f:
         CONFIG = json.load(f)
-    # defaults
-    CONFIG.setdefault("poll_interval", 1.0)
-    CONFIG.setdefault("health_interval", 60)
-    CONFIG.setdefault("startup_seed_minutes", 5)
-    CONFIG.setdefault("notify_restart", True)
+
+    # Validate required fields
+    if not CONFIG.get("secret"):
+        print("❌ Missing 'secret' in config.json!")
+        sys.exit(1)
+    if not CONFIG.get("receiver_url"):
+        print("❌ Missing 'receiver_url' in config.json!")
+        sys.exit(1)
+    if not CONFIG.get("mt5", {}).get("login"):
+        print("❌ Missing mt5.login in config.json!")
+        sys.exit(1)
+    if not CONFIG["mt5"].get("password") or CONFIG["mt5"]["password"] == "***":
+        print("❌ Invalid password in config.json (ganti '***' dengan password asli)!")
+        sys.exit(1)
+
+    # Set defaults
+    CONFIG.setdefault("settings", {})
+    CONFIG.setdefault("mt5", {})
 
 
 # ============================================================
@@ -119,14 +134,12 @@ def mt5_connect():
 
     log("🔴 MT5 terminal mati / belum connect — watchdog action!")
 
-    terminal_path = CONFIG.get("terminal_path", "")
-    creds = {}
-    if CONFIG.get("login"):
-        creds = {
-            "login": int(CONFIG["login"]),
-            "password": CONFIG.get("password", ""),
-            "server": CONFIG.get("server", ""),
-        }
+    terminal_path = CONFIG["mt5"].get("terminal_path", "")
+    creds = {
+        "login": int(CONFIG["mt5"]["login"]),
+        "password": CONFIG["mt5"]["password"],
+        "server": CONFIG["mt5"]["server"],
+    }
 
     # Attempt loop (terminal kadang butuh waktu buat boot)
     for attempt in range(1, 4):
@@ -145,7 +158,7 @@ def mt5_connect():
                 acct = mt5.account_info()
                 login_info = f"#{acct.login} ({acct.server})" if acct else "?"
                 log(f"✅ MT5 CONNECT + LOGIN OK: {login_info}")
-                if CONFIG.get("notify_restart") and _state.get("was_running"):
+                if CONFIG["settings"].get("notify_restart") and _state.get("was_running"):
                     send_notice("⚠️ MT5 terminal auto-restarted oleh watchdog")
                 return True
             log(f"⚠️ initialize() OK tapi terminal belum connected. Last error: {mt5.last_error()}")
@@ -175,7 +188,7 @@ def mt5_connect():
 def send_signal(payload):
     """POST ke VPS receiver dengan retry."""
     url = CONFIG["receiver_url"]
-    headers = {"X-Signal-Secret": SECRET, "Content-Type": "application/json"}
+    headers = {"X-Signal-Secret": CONFIG["secret"], "Content-Type": "application/json"}
 
     for attempt in range(3):
         try:
@@ -222,8 +235,9 @@ def pull_remote_config():
     
     # Poll endpoint
     try:
-        params = {"secret": SECRET}
-        r = requests.get(REMOTE_CONFIG_URL, params=params, timeout=10)
+        remote_url = get_remote_config_url()
+        params = {"secret": CONFIG["secret"]}
+        r = requests.get(remote_url, params=params, timeout=10)
         if r.status_code == 200:
             local_cfg = r.json()
             cur_checksum = local_cfg.get("meta", {}).get("checksum", "")
@@ -233,12 +247,15 @@ def pull_remote_config():
                 log(f"🔄 Config updated! v{last_version}→v{cur_version}, pulling new config...")
                 
                 # Pull full config
-                r = requests.get(REMOTE_CONFIG_URL + "?mask=1", params={"secret": SECRET}, timeout=10)
+                r = requests.get(remote_url + "?mask=1", params={"secret": CONFIG["secret"]}, timeout=10)
                 if r.status_code == 200:
                     cfg = r.json()
                     CONFIG["mt5"] = cfg["mt5"]
                     CONFIG["settings"] = cfg["settings"]
-                    CONFIG_POLL_INTERVAL = cfg["settings"]["config_poll_interval"]
+                    
+                    # Update poll interval dynamically
+                    CONFIG["settings"].setdefault("config_poll_interval", 30)
+                    config_poll_interval = CONFIG["settings"]["config_poll_interval"]
                     
                     save_local_config(cfg)
                     save_checksums(cur_version, cur_checksum)
@@ -307,7 +324,7 @@ def detect_deals():
     if deals is None:
         return
 
-    seed_cutoff = now - CONFIG["startup_seed_minutes"] * 60
+    seed_cutoff = now - CONFIG["settings"]["startup_seed_minutes"] * 60
 
     for deal in deals:
         key = str(deal.ticket)
@@ -471,19 +488,19 @@ def main():
     load_state()
 
     log("=" * 60)
-    log("🚀 MT5 Signal Detector v1 (FULL PYTHON, no EA) started")
+    log("🚀 MT5 Signal Detector v2 (FULL PYTHON, no EA) started")
     log(f"   Receiver: {CONFIG['receiver_url']}")
-    log(f"   Poll: {CONFIG['poll_interval']}s | Health: {CONFIG['health_interval']}s")
+    log(f"   Poll: {CONFIG['settings'].get('poll_interval', 1.0)}s | Health: {CONFIG['settings'].get('health_interval', 60)}s")
     log("=" * 60)
 
     last_health = 0
     reconnect_cooldown = 0
     last_config_poll = 0
-    
+
     while True:
         try:
-            # 1. Poll remote config tiap CONFIG_POLL_INTERVAL (default 30s)
-            if time.time() - last_config_poll >= CONFIG_POLL_INTERVAL:
+            # 1. Poll remote config tiap 30s (default)
+            if time.time() - last_config_poll >= 30:
                 pull_remote_config()
                 last_config_poll = time.time()
             
@@ -498,19 +515,19 @@ def main():
             reconnect_cooldown = 0
             _state["was_running"] = True
 
-            # 2. Deteksi event baru
+            # 3. Deteksi event baru
             detect_deals()
             detect_sltp()
 
-            # 3. Health check berkala
-            if time.time() - last_health >= CONFIG["health_interval"]:
+            # 4. Health check berkala
+            if time.time() - last_health >= CONFIG["settings"].get("health_interval", 60):
                 health_check()
                 last_health = time.time()
 
-            # 4. Persist state tiap loop (murah kok)
+            # 5. Persist state tiap loop (murah kok)
             save_state()
 
-            time.sleep(CONFIG["poll_interval"])
+            time.sleep(CONFIG["settings"]["poll_interval"])
 
         except KeyboardInterrupt:
             log("👋 Shutdown manual (Ctrl+C)")
