@@ -286,13 +286,21 @@ def on_sltp(st, d):
         log(f"⏳ SLTP partial {symbol} (SL={pend['sl']}, TP={pend['tp']}) — masih nunggu")
         return {"status": "holding_partial"}
 
-    # Lengkap -> cek lock dulu, terus kirim
+    # Lengkap -> cek lock DOOR HANYA jikab position aktif SAMA PERIS dengan pending entry
     now = time.time()
     act = st["active"].get(symbol)
-    if act and act.get("position") != pend.get("position") and (now - act.get("ts", 0)) < STALE_LOCK_SECONDS:
+    
+    # JANGAN suppress! Kita mau kirim entry + SLTP barengan (ini kasus normal)
+    # Suppression hanya untuk MULTI-ENTRY attack prevention
+    if act and act.get("position") == position:
+        # Position ACTIVE DAN SAMA DENGAN PENDING -> berarti ini entry baru yang valid
+        # Kirim aja! Jangan suppress
+        pass
+    elif act and act.get("position") != position:
+        # Position aktif LAIN (attack attempt?) -> suppress
         del st["pending"][matched_key]
-        log(f"🚫 SUPPRESS {symbol}: posisi {act.get('position')} sudah aktif duluan")
-        return {"status": "suppressed", "reason": "position_active"}
+        log(f"🚫 SUPPRESS {symbol}: posisi {act.get('position')} berbeda dengan pending {position}")
+        return {"status": "suppressed", "reason": "different_position_active"}
 
     del st["pending"][matched_key]
     send_complete(st, pend)
