@@ -35,6 +35,10 @@ except ImportError:
 import requests
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(BASE, "config.json")
+STATE_FILE = os.path.join(BASE, "detector_state.json")
+LOG_FILE = os.path.join(BASE, "detector.log")
+HEALTH_FILE = os.path.join(BASE, "health.json")
 
 
 def get_remote_config_url():
