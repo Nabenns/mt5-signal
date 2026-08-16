@@ -179,9 +179,20 @@ async def flush_once(client):
         try:
             if sig.get("type") == "SLTP":
                 await send_sltp(client, sig)
+            elif sig.get("type") == "NOTICE":
+                # Send system notice as plain text (no emoji)
+                text = sig.get("text", "")
+                if text:
+                    entities = []
+                    await client(SendReq(
+                        peer=await client.get_entity(TG_CHAT_ID),
+                        message=text,
+                        entities=entities,
+                        random_id=random.randrange(-2**63, 2**63),
+                    ))
+                    log(f"✅ SENT NOTICE: {text[:80]}")
             else:
                 await send_entry(client, sig)
-            sent += 1
         except FloodWaitError as e:
             log(f"⏳ FloodWait {e.seconds}s — retry nanti")
             break

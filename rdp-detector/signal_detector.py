@@ -1,0 +1,438 @@
+#!/usr/bin/env python3
+"""
+MT5 Signal Detector v1 — FULL PYTHON pengganti EA
+====================================================
+Jalan di RDP Windows. Gantikan SignalRelay.mq5 total (EA gausah dipasang).
+
+Fitur:
+1. 🔄 Watchdog    — terminal MT5 mati/ke-close → auto launch lagi + auto re-login
+2. 🔑 Auto-login  — via MetaTrader5.initialize(login, password, server)
+3. 📡 Detector    — poll deals & positions tiap 1 detik (delay ±1 detik)
+4. ❤️ Health      — cek berkala: terminal, koneksi broker, tick freshness, VPS
+5. 📤 Sender      — POST sinyal ke receiver VPS (format SAMA persis dengan EA)
+
+Setup di RDP:
+1. pip install MetaTrader5 requests
+2. Copy config.example.json → config.json, isi credentials MT5 + secret
+3. python signal_detector.py
+   (atau dobel-klik run.bat / install sebagai scheduled task via install_task.bat)
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone, timedelta
+
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    print("❌ Library MetaTrader5 belum install. Jalankan: pip install MetaTrader5")
+    sys.exit(1)
+
+import requests
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(BASE, "config.json")
+STATE_FILE = os.path.join(BASE, "detector_state.json")
+LOG_FILE = os.path.join(BASE, "detector.log")
+HEALTH_FILE = os.path.join(BASE, "health.json")
+
+WIB = timezone(timedelta(hours=7))
+
+# ============================================================
+# CONFIG
+# ============================================================
+CONFIG = {}
+
+
+def load_config():
+    global CONFIG
+    if not os.path.exists(CONFIG_FILE):
+        print("❌ config.json gak ada!")
+        print("   Copy config.example.json jadi config.json, terus isi credentials lo.")
+        sys.exit(1)
+    with open(CONFIG_FILE, encoding="utf-8") as f:
+        CONFIG = json.load(f)
+    # defaults
+    CONFIG.setdefault("poll_interval", 1.0)
+    CONFIG.setdefault("health_interval", 60)
+    CONFIG.setdefault("startup_seed_minutes", 5)
+    CONFIG.setdefault("notify_restart", True)
+
+
+# ============================================================
+# LOGGING
+# ============================================================
+def log(msg):
+    line = f"[{datetime.now(WIB).strftime('%m-%d %H:%M:%S')}] {msg}"
+    print(line, flush=True)
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+# ============================================================
+# STATE (seen deals + position snapshot, biar gak duplikat)
+# ============================================================
+_state = {"seen_deals": {}, "pos_state": {}, "vps_fail_streak": 0}
+
+
+def load_state():
+    global _state
+    try:
+        with open(STATE_FILE, encoding="utf-8") as f:
+            loaded = json.load(f)
+        _state.update(loaded)
+    except (OSError, ValueError):
+        pass
+
+
+def save_state():
+    # prune seen_deals: simpen max 5000 entri
+    if len(_state["seen_deals"]) > 5000:
+        items = sorted(_state["seen_deals"].items(), key=lambda kv: kv[1])
+        _state["seen_deals"] = dict(items[-3000:])
+    try:
+        tmp = STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_state, f)
+        os.replace(tmp, STATE_FILE)
+    except OSError as e:
+        log(f"⚠️ Gagal save state: {e}")
+
+
+# ============================================================
+# WATCHDOG + AUTO-LOGIN
+# ============================================================
+def mt5_connect():
+    """Pastikan terminal MT5 idup + logged in. Auto-launch kalau mati."""
+    info = mt5.terminal_info()
+    if info is not None and info.connected:
+        return True
+
+    log("🔴 MT5 terminal mati / belum connect — watchdog action!")
+
+    terminal_path = CONFIG.get("terminal_path", "")
+    creds = {}
+    if CONFIG.get("login"):
+        creds = {
+            "login": int(CONFIG["login"]),
+            "password": CONFIG.get("password", ""),
+            "server": CONFIG.get("server", ""),
+        }
+
+    # Attempt loop (terminal kadang butuh waktu buat boot)
+    for attempt in range(1, 4):
+        log(f"🔁 Connect attempt {attempt}/3...")
+
+        # initialize() dengan path = auto-launch terminal kalau belum jalan
+        if terminal_path:
+            ok = mt5.initialize(terminal_path, **creds)
+        else:
+            ok = mt5.initialize(**creds)
+
+        if ok:
+            time.sleep(3)
+            info = mt5.terminal_info()
+            if info is not None and info.connected:
+                acct = mt5.account_info()
+                login_info = f"#{acct.login} ({acct.server})" if acct else "?"
+                log(f"✅ MT5 CONNECT + LOGIN OK: {login_info}")
+                if CONFIG.get("notify_restart") and _state.get("was_running"):
+                    send_notice("⚠️ MT5 terminal auto-restarted oleh watchdog")
+                return True
+            log(f"⚠️ initialize() OK tapi terminal belum connected. Last error: {mt5.last_error()}")
+        else:
+            log(f"❌ initialize() gagal: {mt5.last_error()}")
+
+        time.sleep(5)
+
+    # Fallback: coba launch manual via subprocess (kalau initialize path gagal)
+    if terminal_path and os.path.exists(terminal_path):
+        log("🚀 Fallback: launch terminal manual via subprocess...")
+        try:
+            subprocess.Popen([terminal_path])
+            time.sleep(10)
+            if mt5.initialize(**creds):
+                log("✅ Fallback connect OK")
+                return True
+        except Exception as e:
+            log(f"❌ Fallback launch error: {e}")
+
+    return False
+
+
+# ============================================================
+# SENDER (POST ke VPS receiver — format sama dengan EA)
+# ============================================================
+def send_signal(payload):
+    """POST ke receiver VPS dengan retry."""
+    url = CONFIG["receiver_url"]
+    headers = {"X-Signal-Secret": CONFIG["secret"], "Content-Type": "application/json"}
+
+    for attempt in range(3):
+        try:
+            r = requests.post(url, json=payload, headers=headers, timeout=10)
+            if r.status_code == 200:
+                _state["vps_fail_streak"] = 0
+                return r.json()
+            log(f"⚠️ VPS respond {r.status_code}: {r.text[:200]}")
+        except requests.RequestException as e:
+            _state["vps_fail_streak"] = _state.get("vps_fail_streak", 0) + 1
+            log(f"❌ POST gagal (attempt {attempt+1}/3): {e}")
+        time.sleep(2 * (attempt + 1))
+
+    if _state["vps_fail_streak"] >= 5:
+        log("🚨 VPS unreachable 5x berturut-turut! Cek server lo.")
+    return None
+
+
+def send_notice(text):
+    """Kirim notice ke Telegram via receiver (action NOTICE)."""
+    send_signal({
+        "action": "NOTICE",
+        "text": text,
+        "symbol": "SYSTEM",
+        "ts": time.time(),
+    })
+
+
+# ============================================================
+# DETECTOR
+# ============================================================
+def clean_sym(symbol):
+    """Normalisasi symbol: buang prefix #, suffix broker (.a, .m, -ec, dll)."""
+    s = str(symbol or "").lstrip("#")
+    for suf in (".a", ".m", ".pro", "-ec", ".ecn", ".raw"):
+        if s.lower().endswith(suf):
+            s = s[: -len(suf)]
+    return s
+
+
+def get_digits(symbol):
+    info = mt5.symbol_info(symbol)
+    return info.digits if info else 2
+
+
+def detect_deals():
+    """Scan deal history buat OPEN (ENTRY_IN) dan CLOSE (ENTRY_OUT)."""
+    now = time.time()
+    deals = mt5.history_deals_get(now - 3600, now)
+    if deals is None:
+        return
+
+    seed_cutoff = now - CONFIG["startup_seed_minutes"] * 60
+
+    for deal in deals:
+        key = str(deal.ticket)
+        if key in _state["seen_deals"]:
+            continue
+
+        _state["seen_deals"][key] = now
+
+        # Seed mode saat startup: deal lama cuma ditandai, gak dikirim
+        if deal.time < seed_cutoff:
+            continue
+
+        sym = clean_sym(deal.symbol)
+        digits = get_digits(deal.symbol)
+
+        if deal.entry == mt5.DEAL_ENTRY_IN:
+            # Posisi baru dibuka
+            typ = "BUY" if deal.type == mt5.DEAL_TYPE_BUY else "SELL"
+            payload = {
+                "action": "OPEN",
+                "symbol": sym,
+                "type": typ,
+                "price": deal.price,
+                "lot": deal.volume,
+                "sl": 0.0,
+                "tp": 0.0,
+                "digits": digits,
+                "position": deal.position_id,
+                "deal": deal.ticket,
+            }
+            # Kalau posisi udah langsung punya SL/TP, ikutkan
+            pos = mt5.positions_get(ticket=deal.position_id)
+            if pos:
+                payload["sl"] = pos[0].sl
+                payload["tp"] = pos[0].tp
+            res = send_signal(payload)
+            log(f"📤 OPEN {typ} {sym} @ {deal.price} → {res}")
+
+        elif deal.entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT, mt5.DEAL_ENTRY_OUT_BY):
+            # Posisi ditutup
+            payload = {
+                "action": "CLOSE",
+                "symbol": sym,
+                "price": deal.price,
+                "profit": deal.profit,
+                "digits": digits,
+                "position": deal.position_id,
+                "deal": deal.ticket,
+            }
+            res = send_signal(payload)
+            # bersihin pos_state
+            _state["pos_state"].pop(str(deal.position_id), None)
+            log(f"📤 CLOSE {sym} @ {deal.price} (profit {deal.profit}) → {res}")
+
+
+def detect_sltp():
+    """Deteksi perubahan SL/TP di posisi aktif → kirim SLTP."""
+    positions = mt5.positions_get()
+    if positions is None:
+        return
+
+    live_ids = set()
+    for pos in positions:
+        key = str(pos.ticket)
+        live_ids.add(key)
+        prev = _state["pos_state"].get(key)
+        cur = {"sl": pos.sl, "tp": pos.tp, "symbol": clean_sym(pos.symbol)}
+
+        if prev is None:
+            # Posisi baru keliatan (mungkin dibuka sebelum detector jalan)
+            _state["pos_state"][key] = cur
+            continue
+
+        # SL atau TP berubah jadi terisi / berubah nilai → kirim SLTP
+        if (pos.sl != prev["sl"] or pos.tp != prev["tp"]) and (pos.sl > 0 or pos.tp > 0):
+            digits = get_digits(pos.symbol)
+            payload = {
+                "action": "SLTP",
+                "symbol": cur["symbol"],
+                "sl": pos.sl,
+                "tp": pos.tp,
+                "digits": digits,
+                "position": pos.ticket,
+            }
+            res = send_signal(payload)
+            log(f"📤 SLTP {cur['symbol']} SL={pos.sl} TP={pos.tp} → {res}")
+            _state["pos_state"][key] = cur
+
+
+# ============================================================
+# HEALTH CHECKER
+# ============================================================
+def health_check():
+    """Cek semua komponen, tulis ke health.json + log."""
+    health = {
+        "ts": time.time(),
+        "human_time": datetime.now(WIB).strftime("%Y-%m-%d %H:%M:%S"),
+        "mt5_terminal": False,
+        "mt5_account": None,
+        "broker_ping_ms": None,
+        "last_tick_age_sec": None,
+        "positions_open": 0,
+        "vps_reachable": False,
+        "vps_fail_streak": _state.get("vps_fail_streak", 0),
+        "uptime_sec": time.time() - _started_at,
+    }
+
+    t = mt5.terminal_info()
+    if t is not None:
+        health["mt5_terminal"] = bool(t.connected)
+        health["broker_ping_ms"] = t.ping_last
+
+    a = mt5.account_info()
+    if a is not None:
+        health["mt5_account"] = f"#{a.login} {a.server} balance={a.balance:.2f}"
+
+    # Tick freshness (coba beberapa symbol umum)
+    for sym in ("XAUUSD", "#XAUUSD", "BTCUSD", "#BTCUSD", "EURUSD"):
+        tick = mt5.symbol_info_tick(sym)
+        if tick:
+            health["last_tick_age_sec"] = round(time.time() - tick.time, 1)
+            break
+
+    pos = mt5.positions_get()
+    health["positions_open"] = len(pos) if pos else 0
+
+    # VPS reachable?
+    try:
+        r = requests.get(CONFIG["receiver_url"].replace("/api/signal", "/api/health"), timeout=8)
+        health["vps_reachable"] = r.status_code == 200
+    except requests.RequestException:
+        health["vps_reachable"] = False
+
+    try:
+        with open(HEALTH_FILE, "w", encoding="utf-8") as f:
+            json.dump(health, f, indent=2)
+    except OSError:
+        pass
+
+    # Alert kondisi gak sehat
+    if not health["mt5_terminal"]:
+        log("🚨 HEALTH: MT5 terminal DOWN!")
+    elif health["last_tick_age_sec"] and health["last_tick_age_sec"] > 300:
+        log(f"⚠️ HEALTH: tick terakhir udah {health['last_tick_age_sec']}s lalu (koneksi broker lemot?)")
+    if not health["vps_reachable"]:
+        log("🚨 HEALTH: VPS receiver unreachable!")
+
+    log(f"❤️ HEALTH ok={health['mt5_terminal']} ping={health['broker_ping_ms']}ms "
+        f"tick_age={health['last_tick_age_sec']}s pos={health['positions_open']} vps={health['vps_reachable']}")
+    return health
+
+
+# ============================================================
+# MAIN LOOP
+# ============================================================
+_started_at = time.time()
+
+
+def main():
+    load_config()
+    load_state()
+
+    log("=" * 60)
+    log("🚀 MT5 Signal Detector v1 (FULL PYTHON, no EA) started")
+    log(f"   Receiver: {CONFIG['receiver_url']}")
+    log(f"   Poll: {CONFIG['poll_interval']}s | Health: {CONFIG['health_interval']}s")
+    log("=" * 60)
+
+    last_health = 0
+    reconnect_cooldown = 0
+
+    while True:
+        try:
+            # 1. Watchdog: pastiin MT5 idup + login
+            if not mt5_connect():
+                _state["was_running"] = True
+                wait = min(60, 10 + reconnect_cooldown * 5)
+                reconnect_cooldown += 1
+                log(f"😴 MT5 belum bisa connect — retry dalam {wait}s")
+                time.sleep(wait)
+                continue
+            reconnect_cooldown = 0
+            _state["was_running"] = True
+
+            # 2. Deteksi event baru
+            detect_deals()
+            detect_sltp()
+
+            # 3. Health check berkala
+            if time.time() - last_health >= CONFIG["health_interval"]:
+                health_check()
+                last_health = time.time()
+
+            # 4. Persist state tiap loop (murah kok)
+            save_state()
+
+            time.sleep(CONFIG["poll_interval"])
+
+        except KeyboardInterrupt:
+            log("👋 Shutdown manual (Ctrl+C)")
+            save_state()
+            mt5.shutdown()
+            break
+        except Exception as e:
+            log(f"❌ Loop error: {e}")
+            time.sleep(3)
+
+
+if __name__ == "__main__":
+    main()

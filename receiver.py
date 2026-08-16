@@ -110,6 +110,18 @@ def enqueue_entry(sig):
     log(f"📤 ENQUEUE ENTRY: {sig.get('type')} {sig.get('symbol')} @ {sig.get('price')}")
 
 
+def enqueue_notice(text):
+    """Send system notice to Telegram (non-trade alert)."""
+    q = load_sb_queue()
+    q.append({
+        "type": "NOTICE",
+        "text": text,
+        "ts": time.time(),
+    })
+    save_sb_queue(q)
+    log(f"📤 NOTIFICATION: {text[:50]}")
+
+
 def enqueue_sltp(sig, delay):
     q = load_sb_queue()
     q.append({
@@ -423,6 +435,9 @@ class Handler(BaseHTTPRequestHandler):
                 res = on_sltp(st, d)
             elif action == "CLOSE":
                 res = on_close(st, d)
+            elif action == "NOTICE":
+                enqueue_notice(d.get("text", ""))
+                res = {"status": "sent"}
             else:
                 res = {"status": "skipped", "reason": f"action_{action}"}
             save_state(st)
