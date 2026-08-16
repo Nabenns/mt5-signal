@@ -40,6 +40,8 @@ STATE_FILE = os.path.join(BASE, "detector_state.json")
 LOG_FILE = os.path.join(BASE, "detector.log")
 HEALTH_FILE = os.path.join(BASE, "health.json")
 
+WIB = timezone(timedelta(hours=7))
+
 
 def get_remote_config_url():
     """Get full detector config endpoint URL (late binding - called AFTER load_config)."""
