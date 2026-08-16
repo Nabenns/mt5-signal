@@ -329,14 +329,26 @@ def get_digits(symbol):
     return info.digits if info else 2
 
 
+def broker_time_offset():
+    """Selisih waktu server broker vs waktu lokal (detik).
+    PENTING: history_deals_get() pake waktu BROKER, bukan lokal!"""
+    for sym in ("XAUUSD", "#XAUUSD", "BTCUSD", "#BTCUSD", "EURUSD", "USDCHF"):
+        tick = mt5.symbol_info_tick(sym)
+        if tick and tick.time > 0:
+            return tick.time - time.time()
+    return 0
+
+
 def detect_deals():
     """Scan deal history buat OPEN (ENTRY_IN) dan CLOSE (ENTRY_OUT)."""
     now = time.time()
-    deals = mt5.history_deals_get(now - 3600, now)
+    offset = broker_time_offset()
+    # Window query HARUS pake waktu broker (local + offset)
+    deals = mt5.history_deals_get(now + offset - 3600, now + offset + 60)
     if deals is None:
         return
 
-    seed_cutoff = now - CONFIG["settings"]["startup_seed_minutes"] * 60
+    seed_cutoff = now + offset - CONFIG["settings"]["startup_seed_minutes"] * 60
 
     for deal in deals:
         key = str(deal.ticket)
