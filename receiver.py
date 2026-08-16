@@ -39,7 +39,7 @@ with open(os.path.join(BASE, ".env")) as f:
 SECRET = ENV["RECEIVER_SECRET"]
 PORT = int(ENV.get("PORT", "3203"))
 SLTP_GAP_SECONDS = 1         # jeda antara msg ENTRY dan msg SL/TP (biar urut & natural)
-GRACE_SECONDS = 15           # kalau SL/TP gak lengkap dalam 15s, kirim entry doang
+GRACE_SECONDS = 1            # kalau SL/TP gak lengkap dalam 1s, kirim entry doang
 STALE_LOCK_SECONDS = 86400   # lock auto-lepas setelah 24 jam (safety)
 WIB = timezone(timedelta(hours=7))
 
@@ -235,21 +235,16 @@ def on_open(st, d):
         send_complete(st, d)
         return {"status": "sent"}
 
-    # Belum lengkap -> HOLD, tunggu event SLTP
-    key = f"{symbol}:{deal or position}"
-    st["pending"][key] = {
-        "symbol": symbol,
-        "type": d.get("type"),
-        "price": d.get("price"),
-        "sl": sl,
-        "tp": tp,
-        "digits": d.get("digits", 2),
+    # BELUM LENGKAP -> KIRIM ENTRY SEKARANG JUGA, SL/TP nyusul terpisah
+    enqueue_entry(d)
+    st["active"][symbol] = {
         "position": position,
-        "deal": deal,
-        "deadline": now + GRACE_SECONDS,
+        "ts": now,
+        "price": d.get("price"),
+        "waiting_sltp": True,  # marker: masih nunggu SL/TP
     }
-    log(f"⏳ HOLD {symbol} deal {deal} — nunggu SL & TP lengkap")
-    return {"status": "holding"}
+    log(f"📤 ENTRY sent immediately: {d.get('type')} {symbol} @ {d.get('price')} (SLTP pending)")
+    return {"status": "sent", "sltp_pending": True}
 
 
 def on_sltp(st, d):
@@ -259,7 +254,7 @@ def on_sltp(st, d):
     sl = float(d.get("sl") or 0)
     tp = float(d.get("tp") or 0)
 
-    # Cari pending entry yang cocok
+    # Cari pending entry yang cocok (legacy behavior)
     matched_key = None
     for key, pend in st["pending"].items():
         if pend["symbol"] != symbol:
@@ -269,43 +264,45 @@ def on_sltp(st, d):
             matched_key = key
             break
 
-    if not matched_key:
-        # Sudah terkirim / gak dikenal -> adjust DIABAIKAN
-        log(f"🚫 SLTP adjust {symbol} pos {position} diabaikan (entry udah terkirim / bukan pending)")
-        return {"status": "ignored", "reason": "no_pending_entry"}
+    if matched_key:
+        pend = st["pending"][matched_key]
+        if sl > 0:
+            pend["sl"] = sl
+        if tp > 0:
+            pend["tp"] = tp
 
-    pend = st["pending"][matched_key]
-    # Merge cuma nilai yang > 0 (drag SL dulu, TP nyusul — atau sebaliknya)
-    if sl > 0:
-        pend["sl"] = sl
-    if tp > 0:
-        pend["tp"] = tp
+        if not (pend["sl"] > 0 and pend["tp"] > 0):
+            log(f"⏳ SLTP partial {symbol} (SL={pend['sl']}, TP={pend['tp']}) — masih nunggu")
+            return {"status": "holding_partial"}
 
-    # Belum lengkap -> tetap hold
-    if not (pend["sl"] > 0 and pend["tp"] > 0):
-        log(f"⏳ SLTP partial {symbol} (SL={pend['sl']}, TP={pend['tp']}) — masih nunggu")
-        return {"status": "holding_partial"}
-
-    # Lengkap -> cek lock DOOR HANYA jikab position aktif SAMA PERIS dengan pending entry
-    now = time.time()
-    act = st["active"].get(symbol)
-    
-    # JANGAN suppress! Kita mau kirim entry + SLTP barengan (ini kasus normal)
-    # Suppression hanya untuk MULTI-ENTRY attack prevention
-    if act and act.get("position") == position:
-        # Position ACTIVE DAN SAMA DENGAN PENDING -> berarti ini entry baru yang valid
-        # Kirim aja! Jangan suppress
-        pass
-    elif act and act.get("position") != position:
-        # Position aktif LAIN (attack attempt?) -> suppress
         del st["pending"][matched_key]
-        log(f"🚫 SUPPRESS {symbol}: posisi {act.get('position')} berbeda dengan pending {position}")
-        return {"status": "suppressed", "reason": "different_position_active"}
+        send_complete(st, pend)
+        return {"status": "sent", "merged": True}
 
-    del st["pending"][matched_key]
-    send_complete(st, pend)
-    
-    return {"status": "sent", "merged": True}
+    # TIDAK ADA PENDING -> cari ACTIVE lock dengan position yang sama
+    act = st["active"].get(symbol)
+    if act and act.get("position") == position:
+        if sl == 0 and tp == 0:
+            return {"status": "ignored", "reason": "sltp_zero"}
+        # Kirim SLTP terpisah (entry udah dikirim duluan)
+        sig = {
+            "symbol": symbol,
+            "type": d.get("type"),
+            "sl": sl,
+            "tp": tp,
+            "digits": d.get("digits", 2),
+            "position": position,
+            "deal": deal,
+        }
+        enqueue_sltp(sig, 0)  # kirim langsung, tanpa delay
+        # Clear waiting marker
+        act.pop("waiting_sltp", None)
+        log(f"📤 SLTP sent separately: {symbol} SL={sl} TP={tp}")
+        return {"status": "sent", "separate": True}
+
+    # Tidak ada pending, tidak ada active yang cocok -> abaikan
+    log(f"🚫 SLTP {symbol} pos {position} diabaikan (no pending, no active match)")
+    return {"status": "ignored", "reason": "no_pending_entry"}
 
 
 def on_close(st, d):
