@@ -17,7 +17,7 @@ MT5 Terminal (SignalRelay.mq5)
 | Part | Kenapa begitu? |
 |------|---------------|
 | **EA detektor** | `OnTradeTransaction` itu event-driven, nol delay. Pure program polling = telat 1–5 detik, gak worth it. |
-| **Python sender** | MQL5 WebRequest synchronous + susah debug + ribet retry. Python = gampang, retry queue automatic, bisa screenshot chart nanti. |
+| **Python sender** | MQL5 WebRequest synchronous + susah debug + ribet retry. Python = gampang, retry queue automatic. |
 
 Jadi kita pakai **best of both**: EA buat deteksi real-time, Python buat deliver rapi.
 
@@ -258,11 +258,10 @@ curl -s http://127.0.0.1:3203/api/signal/health  # health check
 
 ## 🚀 Next Steps / Opsional Future
 
-1. **Screenshot chart per close** – integration tools screenshot
-2. **Multiple channels routing** – gold different from forex, crypto separate
-3. **Email fallback** – telegram down → email alert
-4. **Dashboard web** – real-time signal history + stats (future)
-5. **Webhook callback** – notify external system on success
+1. **Multiple channels routing** – gold different from forex, crypto separate
+2. **Email fallback** – telegram down → email alert
+3. **Dashboard web** – real-time signal history + stats (future)
+4. **Webhook callback** – notify external system on success
 
 ---
 

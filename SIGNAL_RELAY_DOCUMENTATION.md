@@ -273,10 +273,10 @@ curl -s http://127.0.0.1:3203/api/signal/flush
 
 ## 🚀 Next Steps / Future Enhancements
 
-1. **Screenshot chart on close** — integration with screenshot tool
-2. **Per-symbol routing** — different channels for gold vs forex
-3. **Multiple bots** — broadcast to multiple Telegram groups
-4. **Email fallback** — jika Telegram down, send email alert
+1. **Per-symbol routing** — different channels for gold vs forex
+2. **Multiple bots** — broadcast to multiple Telegram groups
+3. **Email fallback** — jika Telegram down, send email alert
+4. **Performance tracking** — P/L calculation, win rate stats
 5. **Dashboard web** — real-time monitoring signal history + stats
 6. **Webhook callback** — notify external system when signal sent successfully
 
