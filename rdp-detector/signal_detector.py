@@ -233,29 +233,30 @@ def pull_remote_config():
     except OSError:
         pass
     
-    # Poll endpoint
+    cur_checksum = None
+    cur_version = None
+    
+    # Poll checksum endpoint FIRST
     try:
-        remote_url = get_remote_config_url()
+        checksum_url = get_remote_config_url() + "/checksum"
         params = {"secret": CONFIG["secret"]}
-        r = requests.get(remote_url, params=params, timeout=10)
+        r = requests.get(checksum_url, params=params, timeout=10)
+        
         if r.status_code == 200:
             local_cfg = r.json()
-            cur_checksum = local_cfg.get("meta", {}).get("checksum", "")
-            cur_version = local_cfg.get("meta", {}).get("version", 0)
+            cur_checksum = local_cfg.get("checksum", "")
+            cur_version = local_cfg.get("version", 0)
             
             if cur_checksum != last_checksum:
                 log(f"🔄 Config updated! v{last_version}→v{cur_version}, pulling new config...")
                 
                 # Pull full config
-                r = requests.get(remote_url + "?mask=1", params={"secret": CONFIG["secret"]}, timeout=10)
+                full_url = get_remote_config_url()
+                r = requests.get(full_url + "?mask=1", params={"secret": CONFIG["secret"]}, timeout=10)
                 if r.status_code == 200:
                     cfg = r.json()
                     CONFIG["mt5"] = cfg["mt5"]
                     CONFIG["settings"] = cfg["settings"]
-                    
-                    # Update poll interval dynamically
-                    CONFIG["settings"].setdefault("config_poll_interval", 30)
-                    config_poll_interval = CONFIG["settings"]["config_poll_interval"]
                     
                     save_local_config(cfg)
                     save_checksums(cur_version, cur_checksum)
@@ -270,18 +271,22 @@ def pull_remote_config():
                         time.sleep(2)
                         return True
                 else:
-                    log(f"❌ Gagal pull config: {r.status_code}")
+                    log(f"❌ Gagal pull full config: {r.status_code}")
             else:
                 log("ℹ️ Config unchanged (same checksum)")
         else:
             log(f"❌ Checksum poll failed: {r.status_code}")
+            cur_checksum = last_checksum
+            cur_version = last_version
         
         # Save current state
-        if cur_checksum:
+        if cur_checksum is not None and cur_version is not None:
             save_checksums(cur_version, cur_checksum)
             
     except requests.RequestException as e:
         log(f"⚠️ Remote config poll error: {e}")
+        cur_checksum = last_checksum
+        cur_version = last_version
     
     return False
 
