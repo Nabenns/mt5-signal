@@ -20,6 +20,7 @@ import json
 import os
 import threading
 import time
+import hashlib
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -45,9 +46,60 @@ WIB = timezone(timedelta(hours=7))
 SB_QUEUE_FILE = os.path.join(BASE, "sb_queue.json")
 STATE_FILE = os.path.join(BASE, "state.json")
 LOG_FILE = os.path.join(BASE, "receiver.log")
+DETECTOR_CONFIG_FILE = os.path.join(BASE, "detector_config.json")
 
 _lock = threading.Lock()
 _seen_events = {}
+
+
+# ---- detector config (remote-managed, source of truth di VPS) ----
+DEFAULT_DETECTOR_CONFIG = {
+    "mt5": {
+        "login": 0,
+        "password": "***",
+        "server": "",
+        "terminal_path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
+    },
+    "settings": {
+        "poll_interval": 1.0,
+        "health_interval": 60,
+        "startup_seed_minutes": 5,
+        "notify_restart": True,
+        "config_poll_interval": 30,
+    },
+    "meta": {"version": 0, "updated_at": 0},
+}
+
+
+def load_detector_config():
+    try:
+        with open(DETECTOR_CONFIG_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return json.loads(json.dumps(DEFAULT_DETECTOR_CONFIG))
+
+
+def save_detector_config(cfg):
+    cfg["meta"]["version"] = int(cfg.get("meta", {}).get("version", 0)) + 1
+    cfg["meta"]["updated_at"] = time.time()
+    # checksum dari isi (tanpa meta) biar detector bisa detect perubahan
+    payload = json.dumps({"mt5": cfg["mt5"], "settings": cfg["settings"]}, sort_keys=True)
+    cfg["meta"]["checksum"] = hashlib.sha256(payload.encode()).hexdigest()[:16]
+    tmp = DETECTOR_CONFIG_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, indent=2)
+    os.replace(tmp, DETECTOR_CONFIG_FILE)
+    return cfg
+
+
+def deep_merge(base, new):
+    """Merge dict new ke base (nested), return base."""
+    for k, v in new.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            deep_merge(base[k], v)
+        else:
+            base[k] = v
+    return base
 
 
 def log(msg):
@@ -353,6 +405,32 @@ class Handler(BaseHTTPRequestHandler):
                 lines = []
             self._json(200, {"count": len(lines), "data": [l.strip() for l in lines]}, cors=True)
         
+        # ---- Detector config (read) ----
+        elif path == "/api/config/detector":
+            # Auth required — config mengandung password MT5
+            secret = self.headers.get("X-Signal-Secret") or self.headers.get("Authorization", "").replace("Bearer ", "")
+            if not secret:
+                qs = parse_qs(parsed.query)
+                secret = qs.get("secret", [None])[0]
+            if secret != SECRET:
+                return self._json(401, {"error": "unauthorized"}, cors=True)
+            # ?mask=1 → password di-mask (buat display di FE)
+            qs = parse_qs(parsed.query)
+            cfg = load_detector_config()
+            if qs.get("mask", ["0"])[0] == "1":
+                cfg = json.loads(json.dumps(cfg))
+                pw = cfg["mt5"].get("password", "")
+                cfg["mt5"]["password"] = ("•" * 8 + pw[-2:]) if pw else ""
+            self._json(200, cfg, cors=True)
+        
+        elif path == "/api/config/detector/checksum":
+            # Lightweight endpoint buat detector poll perubahan (no auth body leak)
+            cfg = load_detector_config()
+            self._json(200, {
+                "version": cfg.get("meta", {}).get("version", 0),
+                "checksum": cfg.get("meta", {}).get("checksum", ""),
+            }, cors=True)
+        
         else:
             self._json(404, {"error": "not found"}, cors=True)
 
@@ -387,6 +465,44 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(410, {
                 "error": "Feature disabled", 
                 "message": "TradingView screenshot feature has been removed"
+            }, cors=True)
+        
+        # ---- Detector config (write) ----
+        elif path == "/api/config/detector":
+            secret = self.headers.get("X-Signal-Secret") or self.headers.get("Authorization", "").replace("Bearer ", "")
+            if not secret:
+                qs = parse_qs(parsed.query)
+                secret = qs.get("secret", [None])[0]
+            if secret != SECRET:
+                return self._json(401, {"error": "unauthorized"}, cors=True)
+            
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            try:
+                req = json.loads(body)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                return self._json(400, {"error": "Invalid JSON"}, cors=True)
+            
+            with _lock:
+                cfg = load_detector_config()
+                # Merge hanya mt5 dan settings
+                if "mt5" in req:
+                    cfg["mt5"] = deep_merge(cfg["mt5"], req["mt5"])
+                if "settings" in req:
+                    cfg["settings"] = deep_merge(cfg["settings"], req["settings"])
+                # Validasi basic
+                if not cfg["mt5"].get("login"):
+                    return self._json(400, {"error": "missing mt5.login"}, cors=True)
+                if not cfg["mt5"].get("password") or cfg["mt5"]["password"] == "***":
+                    return self._json(400, {"error": "missing/invalid mt5.password"}, cors=True)
+                
+                cfg = save_detector_config(cfg)
+            
+            log(f"✅ DETECTOR CONFIG UPDATED (v{cfg['meta']['version']}) — from {self.client_address[0]}")
+            return self._json(200, {
+                "status": "updated",
+                "version": cfg["meta"]["version"],
+                "checksum": cfg["meta"]["checksum"]
             }, cors=True)
         
         if path not in ("/signal", "/api/signal"):

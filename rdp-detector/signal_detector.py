@@ -24,6 +24,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone, timedelta
+import requests
 
 try:
     import MetaTrader5 as mt5
@@ -31,13 +32,15 @@ except ImportError:
     print("❌ Library MetaTrader5 belum install. Jalankan: pip install MetaTrader5")
     sys.exit(1)
 
-import requests
-
 BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE, "config.json")
+REMOTE_CONFIG_URL = CONFIG.get("receiver_url", "").rstrip("/") + "/api/config/detector"
+LOCAL_REMOTE_URL = CONFIG.get("local_receiver_url", "")  # optional for local testing
+SECRET = CONFIG["secret"]
 STATE_FILE = os.path.join(BASE, "detector_state.json")
 LOG_FILE = os.path.join(BASE, "detector.log")
 HEALTH_FILE = os.path.join(BASE, "health.json")
+CONFIG_POLL_INTERVAL = CONFIG["settings"]["config_poll_interval"]
 
 WIB = timezone(timedelta(hours=7))
 
@@ -170,9 +173,9 @@ def mt5_connect():
 # SENDER (POST ke VPS receiver — format sama dengan EA)
 # ============================================================
 def send_signal(payload):
-    """POST ke receiver VPS dengan retry."""
+    """POST ke VPS receiver dengan retry."""
     url = CONFIG["receiver_url"]
-    headers = {"X-Signal-Secret": CONFIG["secret"], "Content-Type": "application/json"}
+    headers = {"X-Signal-Secret": SECRET, "Content-Type": "application/json"}
 
     for attempt in range(3):
         try:
@@ -199,6 +202,85 @@ def send_notice(text):
         "symbol": "SYSTEM",
         "ts": time.time(),
     })
+
+
+# ---- Config management from remote API ----
+def pull_remote_config():
+    """Pull config dari /api/config/detector/checksum → compare & apply if changed."""
+    checksums_file = os.path.join(BASE, "config_checksums.json")
+    
+    # Load last known checksum
+    last_checksum = ""
+    last_version = 0
+    try:
+        with open(checksums_file) as f:
+            data = json.load(f)
+            last_checksum = data.get("checksum", "")
+            last_version = data.get("version", 0)
+    except OSError:
+        pass
+    
+    # Poll endpoint
+    try:
+        params = {"secret": SECRET}
+        r = requests.get(REMOTE_CONFIG_URL, params=params, timeout=10)
+        if r.status_code == 200:
+            local_cfg = r.json()
+            cur_checksum = local_cfg.get("meta", {}).get("checksum", "")
+            cur_version = local_cfg.get("meta", {}).get("version", 0)
+            
+            if cur_checksum != last_checksum:
+                log(f"🔄 Config updated! v{last_version}→v{cur_version}, pulling new config...")
+                
+                # Pull full config
+                r = requests.get(REMOTE_CONFIG_URL + "?mask=1", params={"secret": SECRET}, timeout=10)
+                if r.status_code == 200:
+                    cfg = r.json()
+                    CONFIG["mt5"] = cfg["mt5"]
+                    CONFIG["settings"] = cfg["settings"]
+                    CONFIG_POLL_INTERVAL = cfg["settings"]["config_poll_interval"]
+                    
+                    save_local_config(cfg)
+                    save_checksums(cur_version, cur_checksum)
+                    
+                    # Auto-re-login if credentials changed
+                    old_pw = getattr(pull_remote_config, "prev_password", "")
+                    new_pw = cfg["mt5"].get("password", "")
+                    if new_pw and new_pw != old_pw:
+                        pull_remote_config.prev_password = new_pw
+                        log("⚠️ Password berubah — auto-reconnecting MT5...")
+                        mt5.shutdown()
+                        time.sleep(2)
+                        return True
+                else:
+                    log(f"❌ Gagal pull config: {r.status_code}")
+            else:
+                log("ℹ️ Config unchanged (same checksum)")
+        else:
+            log(f"❌ Checksum poll failed: {r.status_code}")
+        
+        # Save current state
+        if cur_checksum:
+            save_checksums(cur_version, cur_checksum)
+            
+    except requests.RequestException as e:
+        log(f"⚠️ Remote config poll error: {e}")
+    
+    return False
+
+
+def save_local_config(cfg):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(cfg, f, indent=2)
+    log("✅ Local config saved")
+
+
+def save_checksums(version, checksum):
+    with open(os.path.join(BASE, "config_checksums.json"), "w") as f:
+        json.dump({"version": version, "checksum": checksum}, f)
+
+
+pull_remote_config.prev_password = None  # init flag
 
 
 # ============================================================
@@ -396,10 +478,16 @@ def main():
 
     last_health = 0
     reconnect_cooldown = 0
-
+    last_config_poll = 0
+    
     while True:
         try:
-            # 1. Watchdog: pastiin MT5 idup + login
+            # 1. Poll remote config tiap CONFIG_POLL_INTERVAL (default 30s)
+            if time.time() - last_config_poll >= CONFIG_POLL_INTERVAL:
+                pull_remote_config()
+                last_config_poll = time.time()
+            
+            # 2. Watchdog: pastiin MT5 idup + login
             if not mt5_connect():
                 _state["was_running"] = True
                 wait = min(60, 10 + reconnect_cooldown * 5)
