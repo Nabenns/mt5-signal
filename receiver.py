@@ -370,63 +370,13 @@ class Handler(BaseHTTPRequestHandler):
             log("🔄 SYSTEM RESET via API")
             return self._json(200, {"status": "reset complete"}, cors=True)
         
-        # ---- Update TV links config (legacy, screenshot removed) ----
-        if path == "/api/config/tv-links":
-            secret = self.headers.get("X-Signal-Secret") or self.headers.get("Authorization", "").replace("Bearer ", "")
-            if secret != SECRET:
-                return self._json(401, {"error": "unauthorized"}, cors=True)
-            
-            content_length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            try:
-                links = json.loads(body)
-            except Exception:
-                return self._json(400, {"error": "Invalid JSON"}, cors=True)
-            
-            cfg_path = os.path.join(BASE, "screenshot_config.json")
-            try:
-                with open(cfg_path) as f:
-                    cfg = json.load(f)
-            except Exception:
-                cfg = {}
-            
-            cfg["tradingview_links"] = links
-            tmp = cfg_path + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(cfg, f, indent=2)
-            os.replace(tmp, cfg_path)
-            log(f"✅ TV links updated: {len(links)} symbols")
-            return self._json(200, {"status": "updated"}, cors=True)
+        # ---- LEGACY: Screenshot config endpoints (disabled - feature removed) ----
+        if path in ("/api/config/tv-links", "/api/config/channels"):
+            return self._json(410, {
+                "error": "Feature disabled", 
+                "message": "TradingView screenshot feature has been removed"
+            }, cors=True)
         
-        # ---- Update channels config (legacy - screenshot feature removed) ----
-        if path == "/api/config/channels":
-            secret = self.headers.get("X-Signal-Secret") or self.headers.get("Authorization", "").replace("Bearer ", "")
-            if secret != SECRET:
-                return self._json(401, {"error": "unauthorized"}, cors=True)
-            
-            content_length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            try:
-                channels = json.loads(body)
-            except Exception:
-                return self._json(400, {"error": "Invalid JSON"}, cors=True)
-            
-            cfg_path = os.path.join(BASE, "screenshot_config.json")
-            try:
-                with open(cfg_path) as f:
-                    cfg = json.load(f)
-            except Exception:
-                cfg = {}
-            
-            cfg["telegram_channels"] = channels
-            tmp = cfg_path + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(cfg, f, indent=2)
-            os.replace(tmp, cfg_path)
-            
-            log(f"✅ Channels updated")
-            return self._json(200, {"status": "updated"}, cors=True)
-
         if path not in ("/signal", "/api/signal"):
             return self._json(404, {"error": "not found"})
 
