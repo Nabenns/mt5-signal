@@ -35,19 +35,29 @@ except ImportError:
 import requests
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(BASE, "config.json")
+STATE_FILE = os.path.join(BASE, "detector_state.json")
+LOG_FILE = os.path.join(BASE, "detector.log")
+HEALTH_FILE = os.path.join(BASE, "health.json")
 
 
-def get_remote_config_url():
-    """Get full detector config endpoint URL (late binding - called AFTER load_config)."""
+def get_config_api_base():
+    """Get base URL tanpa /api/signal suffix."""
     base = CONFIG.get("receiver_url", "")
     # Strip /api/signal from the end if present
     if base.endswith("/api/signal"):
-        base = base[:-11]  # Remove "/api/signal"
+        return base[:-11]  # Remove "/api/signal"
     elif base.endswith("/api/signal/"):
-        base = base[:-12]  # Remove "/api/signal/"
-    return base + "/api/config/detector"
+        return base[:-12]  # Remove "/api/signal/"
+    return base
 
 
+def get_remote_config_url():
+    return get_config_api_base() + "/api/config/detector"
+
+WIB = timezone(timedelta(hours=7))
+
+# ============================================================
 # CONFIG
 # ============================================================
 CONFIG = {}

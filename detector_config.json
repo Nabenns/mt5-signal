@@ -1,0 +1,22 @@
+{
+  "mt5": {
+    "login": 49781717,
+    "password": "***",
+    "server": "HFMarketsGlobal-Demo",
+    "terminal_path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
+  },
+  "receiver_url": "https://hirmes.bensserver.cloud/api/signal",
+  "secret": "3e0371e7c5673317fc134f192e0b7df4dc7a980e8b4fb610",
+  "settings": {
+    "poll_interval": 1.0,
+    "health_interval": 60,
+    "startup_seed_minutes": 5,
+    "notify_restart": true,
+    "config_poll_interval": 30
+  },
+  "meta": {
+    "version": 1,
+    "updated_at": 1723842339,
+    "checksum": "fa5ab48f7a94063a"
+  }
+}
