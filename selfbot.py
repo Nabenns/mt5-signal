@@ -26,7 +26,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 SESSION = os.path.join(BASE, "6285196827787")  # telethon append .session
 API_ID = 38274094
 API_HASH = "c57671be8ccbd29f37dd82c97a28370e"
-TG_CHAT_ID = -1004479253024
+TG_CHAT_ID = -1001816822545  # Production channel: MT5 Signal Relay (New)
 SB_QUEUE = os.path.join(BASE, "sb_queue.json")
 LOG_FILE = os.path.join(BASE, "selfbot.log")
 WIB = timezone(timedelta(hours=7))
