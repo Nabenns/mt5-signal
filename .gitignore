@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Environment variables
+.env
+
+# Logs
+*.log
+receiver.log
+selfbot.log
+
+# Screenshots & artifacts
+screenshots/
+screenshot_config.json
+screenshot_queue.json
+screenshot_status.db
+sb_queue.json
+state.json
+
+# Session files
+*.session
+
+# OS
+.DS_Store
+Thumbs.db

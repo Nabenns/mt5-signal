@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MT5 Signal Relay — NeoBrutalism Dashboard</title>
+    <style>
+        :root {
+            /* NeoBrutalism Color Palette */
+            --bg-color: #ffffff;
+            --text-color: #000000;
+            --primary: #ff6b6b;
+            --secondary: #4ecdc4;
+            --accent: #ffe66d;
+            --border-color: #000000;
+            --card-bg: #f7f9fa;
+            --shadow: 4px 4px 0px var(--border-color);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: linear-gradient(135deg, var(--accent) 0%, #fff 100%);
+            color: var(--text-color);
+            min-height: 100vh;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        header {
+            background: white;
+            border: 4px solid var(--border-color);
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: var(--shadow);
+            position: relative;
+        }
+
+        header::before {
+            content: '';
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            width: 40px;
+            height: 40px;
+            background: var(--primary);
+            border: 3px solid var(--border-color);
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: -1px;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            font-size: 1.2rem;
+            opacity: 0.7;
+        }
+
+        /* Status Card */
+        .status-card {
+            background: white;
+            border: 4px solid var(--border-color);
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            box-shadow: var(--shadow);
+        }
+
+        .status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            font-weight: 700;
+            border: 3px solid var(--border-color);
+            background: var(--secondary);
+            text-transform: uppercase;
+        }
+
+        .status-badge.error {
+            background: var(--primary);
+        }
+
+        /* Grid Layout */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 4px solid var(--border-color);
+            padding: 1.5rem;
+            box-shadow: var(--shadow);
+            transition: transform 0.2s;
+        }
+
+        .card:hover {
+            transform: translate(-2px, -2px);
+            box-shadow: 6px 6px 0px var(--border-color);
+        }
+
+        .card-title {
+            font-size: 1.3rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border: 3px solid var(--border-color);
+        }
+
+        th {
+            background: var(--text-color);
+            color: white;
+            padding: 1rem;
+            text-align: left;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        td {
+            padding: 1rem;
+            border-top: 2px solid var(--border-color);
+        }
+
+        tr:last-child td {
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        /* Buttons */
+        .btn-group {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+
+        button {
+            flex: 1;
+            padding: 1rem 2rem;
+            font-family: 'Courier New', monospace;
+            font-size: 1rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            border: 3px solid var(--border-color);
+            background: var(--primary);
+            color: white;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            transform: translate(-2px, -2px);
+            box-shadow: 6px 6px 0px var(--border-color);
+        }
+
+        button.danger {
+            background: #ff4757;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: var(--shadow);
+        }
+
+        /* Config Form */
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        label {
+            display: block;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+        }
+
+        input[type="number"],
+        input[type="text"] {
+            width: 100%;
+            padding: 1rem;
+            font-family: 'Courier New', monospace;
+            font-size: 1rem;
+            border: 3px solid var(--border-color);
+            background: white;
+            outline: none;
+        }
+
+        input:focus {
+            box-shadow: var(--shadow);
+        }
+
+        /* Logs */
+        .logs-container {
+            max-height: 400px;
+            overflow-y: auto;
+            background: var(--text-color);
+            color: var(--secondary);
+            padding: 1rem;
+            border: 3px solid var(--border-color);
+            font-family: monospace;
+        }
+
+        .log-entry {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .log-timestamp {
+            color: var(--accent);
+            margin-right: 1rem;
+        }
+
+        /* Refresh Indicator */
+        .refresh-indicator {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background: var(--secondary);
+            border: 3px solid var(--border-color);
+            padding: 1rem;
+            box-shadow: var(--shadow);
+            font-weight: 700;
+            z-index: 1000;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            body {
+                padding: 1rem;
+            }
+            
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            h1 {
+                font-size: 1.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>🚀 MT5 Signal Relay</h1>
+            <p class="subtitle">NeoBrutalism Dashboard • Production Channel: -1001816822545</p>
+        </header>
+
+        <!-- Status -->
+        <div class="status-card">
+            <div class="status-header">
+                <h2>System Status</h2>
+                <span id="statusBadge" class="status-badge">Loading...</span>
+            </div>
+            <div id="statusMessage">Checking connection...</div>
+            <div id="healthTimestamp" style="margin-top: 1rem; font-size: 0.9rem;"></div>
+        </div>
+
+        <!-- Active Positions -->
+        <div class="grid">
+            <div class="card">
+                <h3 class="card-title">📊 Active Positions</h3>
+                <table id="positionsTable">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Price</th>
+                            <th>Opened At</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positionsBody">
+                        <tr><td colspan="4" style="text-align: center;">No active positions</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Configuration -->
+            <div class="card">
+                <h3 class="card-title">⚙️ Detector Config</h3>
+                <div class="form-group">
+                    <label>MT5 Login</label>
+                    <input type="number" id="cfgLogin" placeholder="Enter login">
+                </div>
+                <div class="form-group">
+                    <label>Server</label>
+                    <input type="text" id="cfgServer" placeholder="Enter server">
+                </div>
+                <div class="form-group">
+                    <label>Poll Interval (sec)</label>
+                    <input type="number" step="0.1" id="cfgPoll" placeholder="1.0">
+                </div>
+                <div class="btn-group">
+                    <button onclick="saveConfig()">Save Config</button>
+                    <button class="danger" onclick="resetSystem()">Reset System</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Activity & Logs -->
+        <div class="grid">
+            <div class="card">
+                <h3 class="card-title">📋 Recent Activity (Last 20)</h3>
+                <div class="logs-container" id="logsContainer">
+                    Loading logs...
+                </div>
+            </div>
+
+            <!-- Stats Summary -->
+            <div class="card">
+                <h3 class="card-title">📈 Quick Stats</h3>
+                <div style="font-size: 1.5rem; font-weight: 700; margin-bottom: 1rem;">
+                    Active Locks: <span id="activeLocksCount">-</span>
+                </div>
+                <div style="font-size: 1.2rem;">
+                    Queued Signals: <span id="queuedSignals">-</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Refresh Indicator -->
+    <div class="refresh-indicator">
+        Auto-refresh: 5s
+    </div>
+
+    <script>
+        // Configuration
+        const SECRET = "3e0371e7c5673317fc134f192e0b7df4dc7a980e8b4fb610";
+        const BASE_URL = "https://hirmes.bensserver.cloud/api";
+        let refreshInterval = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchAllData();
+            refreshInterval = setInterval(fetchAllData, 5000);
+        });
+
+        // Fetch all data
+        async function fetchAllData() {
+            try {
+                const [health, positions, logs, config] = await Promise.all([
+                    fetch(`${BASE_URL}/health?secret=${SECRET}`),
+                    fetch(`${BASE_URL}/positions?secret=${SECRET}`),
+                    fetch(`${BASE_URL}/logs?secret=${SECRET}`),
+                    fetch(`${BASE_URL}/config/detector?mask=1&secret=${SECRET}`)
+                ]);
+
+                const healthData = await health.json();
+                updateStatus(healthData);
+                updatePositions(positions.data || []);
+                updateLogs(logs.data || []);
+                updateStats(healthData.stats);
+                
+                if (config.ok) {
+                    const cfg = await config.json();
+                    populateConfig(cfg);
+                }
+
+            } catch (err) {
+                console.error('API Error:', err);
+                updateStatus({ status: 'error', timestamp: new Date().toISOString(), stats: {} }, true);
+            }
+        }
+
+        // Update status badge
+        function updateStatus(data, isError = false) {
+            const badge = document.getElementById('statusBadge');
+            const message = document.getElementById('statusMessage');
+            const timestamp = document.getElementById('healthTimestamp');
+
+            badge.textContent = data.status.toUpperCase();
+            badge.className = `status-badge ${isError ? 'error' : ''}`;
+            
+            message.textContent = `System is ${data.status === 'ok' ? 'running smoothly' : 'experiencing issues'}.`;
+            
+            const date = new Date(data.timestamp);
+            timestamp.textContent = `Last updated: ${date.toLocaleString('en-US', { 
+                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' 
+            })}`;
+        }
+
+        // Update positions table
+        function updatePositions(positions) {
+            const tbody = document.getElementById('positionsBody');
+            
+            if (positions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center;">No active positions</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = positions.map(pos => `
+                <tr>
+                    <td><strong>${pos.symbol}</strong></td>
+                    <td>$${pos.price.toFixed(3)}</td>
+                    <td>${formatDate(pos.opened_at)}</td>
+                    <td><span style="background: var(--secondary); padding: 0.25rem 0.5rem; border: 2px solid #000; font-size: 0.8rem;">${pos.status}</span></td>
+                </tr>
+            `).join('');
+        }
+
+        // Update logs
+        function updateLogs(logs) {
+            const container = document.getElementById('logsContainer');
+            
+            if (logs.length === 0) {
+                container.innerHTML = '<div class="log-entry">No activity yet</div>';
+                return;
+            }
+
+            // Show last 20 logs in reverse order
+            container.innerHTML = logs.slice(-20).reverse().map(log => {
+                // Extract timestamp and message
+                const match = log.match(/\[([^\]]+)\]/);
+                const timestamp = match ? `<span class="log-timestamp">${match[1]}</span>` : '';
+                const message = log.replace(/\uD83D[\uDC00-\uDFFF]/g, '').replace(/[a-zA-Z]+:[^ ]+/g, '');
+                
+                return `<div class="log-entry">${timestamp}${message}</div>`;
+            }).join('');
+        }
+
+        // Update stats
+        function updateStats(stats) {
+            if (!stats) return;
+            
+            document.getElementById('activeLocksCount').textContent = stats.active_locks || 0;
+            document.getElementById('queuedSignals').textContent = stats.queued_selfbot || 0;
+        }
+
+        // Populate config form
+        function populateConfig(config) {
+            document.getElementById('cfgLogin').value = config.mt5.login || '';
+            document.getElementById('cfgServer').value = config.mt5.server || '';
+            document.getElementById('cfgPoll').value = config.settings.poll_interval || 1.0;
+        }
+
+        // Save configuration
+        async function saveConfig() {
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            try {
+                const response = await fetch(`${BASE_URL}/config/detector?secret=${SECRET}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        mt5: {
+                            login: parseInt(document.getElementById('cfgLogin').value) || 0,
+                            server: document.getElementById('cfgServer').value,
+                        },
+                        settings: {
+                            poll_interval: parseFloat(document.getElementById('cfgPoll').value) || 1.0,
+                        }
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    alert('✅ Configuration saved successfully!');
+                    fetchAllData();
+                } else {
+                    alert(`❌ Failed: ${data.error || 'Unknown error'}`);
+                }
+
+            } catch (err) {
+                alert('❌ Network error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        // Reset system with confirmation
+        async function resetSystem() {
+            if (!confirm('⚠️ This will clear all pending orders.\n\nMake sure no active positions exist!\n\nContinue?')) return;
+
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Resetting...';
+
+            try {
+                const response = await fetch(`${BASE_URL}/reset?secret=${SECRET}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.status === 'reset complete') {
+                    alert('✅ System reset successful!');
+                    fetchAllData();
+                } else if (data.error === 'reset_blocked') {
+                    alert(`❌ Reset blocked:\n${data.reason}\n\nActive positions: ${data.active_positions?.join(', ')}`);
+                } else {
+                    alert('❌ Reset failed');
+                }
+
+            } catch (err) {
+                alert('❌ Reset failed: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        // Helper: Format timestamp
+        function formatDate(unix) {
+            const date = new Date(unix * 1000);
+            return date.toLocaleString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        }
+    </script>
+</body>
+</html>
