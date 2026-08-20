@@ -263,18 +263,18 @@ async def send_limit(client, sig):
     auto_sl = base + _pip_size(base, digits) * 60 if typ == "SELL" else base - _pip_size(base, digits) * 60
     if typ == "BUY":
         # BUY LIMIT: zone DI BAWAH harga (price-area sampai price), tampil high-low
-        price_high = _fmt_limit_price(base, digits)
-        price_low = _fmt_limit_price(base - area_range, digits)
+        price_high = fmt_harga(base, digits)
+        price_low = fmt_harga(base - area_range, digits)
         # SL ASLI dari MT5 kalau ada; fallback auto 60 pips
         sl_price = sl_actual if sl_actual > 0 else auto_sl
-        header = f"| {price_high} - {price_low}"   # 4477 - 4475
+        header = f"| {price_high} - {price_low}"   # 4.477 - 4.475
     else:
         # SELL LIMIT: zone DI ATAS harga (price sampai price+area), tampil low-high
-        price_low = _fmt_limit_price(base, digits)
-        price_high = _fmt_limit_price(base + area_range, digits)
+        price_low = fmt_harga(base, digits)
+        price_high = fmt_harga(base + area_range, digits)
         # SL ASLI dari MT5 kalau ada; fallback auto 60 pips
         sl_price = sl_actual if sl_actual > 0 else auto_sl
-        header = f"| {price_low} - {price_high}"   # 4528 - 4530
+        header = f"| {price_low} - {price_high}"   # 4.594 - 4.596
 
     if typ == "BUY":
         head_icon = "\U0001F4B0"  # 💰
@@ -285,7 +285,7 @@ async def send_limit(client, sig):
 
     text = (
         f"{head_icon} {typ} LIMIT {sym} {header}\n"
-        f"SL : {_fmt_limit_price(sl_price, digits)}\n\n"
+        f"SL : {fmt_harga(sl_price, digits)}\n\n"
         f"TP 1 : 60 PIPS\n"
         f"TP 2 : 120 PIPS\n"
         f"TP 3 : \u2049\ufe0f\n\n"
@@ -300,7 +300,7 @@ async def send_limit(client, sig):
     hdr_start = text.find(header)
     if hdr_start >= 0:
         entities.append(MessageEntityBold(offset=hdr_start, length=len(header)))
-    sl_str = _fmt_limit_price(sl_price, digits)
+    sl_str = fmt_harga(sl_price, digits)
     sl_start = text.find(f"SL : {sl_str}")
     if sl_start >= 0:
         entities.append(MessageEntityBold(offset=sl_start + 5, length=len(sl_str)))
@@ -311,7 +311,7 @@ async def send_limit(client, sig):
         entities=entities,
         random_id=random.randrange(-2**63, 2**63),
     ))
-    log(f"✅ SENT LIMIT ({typ}): {sym} {header} SL {sl_price} → chat {chat}")
+    log(f"✅ SENT LIMIT ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} → chat {chat}")
 
 
 async def flush_once(client):
