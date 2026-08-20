@@ -284,7 +284,7 @@ async def send_limit(client, sig):
         emoji_id = SELL_EMOJI_ID
 
     text = (
-        f"{head_icon} {typ} {sym} {header}\n"
+        f"{head_icon} {typ} LIMIT {sym} {header}\n"
         f"SL : {_fmt_limit_price(sl_price, digits)}\n\n"
         f"TP 1 : 60 PIPS\n"
         f"TP 2 : 120 PIPS\n"
