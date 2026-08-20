@@ -27,8 +27,8 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 SESSION = os.path.join(BASE, "6285196827787")  # telethon append .session
 API_ID = 38274094
 API_HASH = "c57671be8ccbd29f37dd82c97a28370e"
-TG_CHAT_ID = -1001816822545  # Production channel: MT5 Signal Relay (New)
-TG_TEST_CHAT_ID = -1004479253024  # Test channel (channel lama, buat testing)
+TG_CHAT_ID = -1004479253024  # 🔧 TEST MODE: default ke test channel (sementara, buat uji coba)
+TG_TEST_CHAT_ID = -1004479253024  # test channel (channel lama)
 SB_QUEUE = os.path.join(BASE, "sb_queue.json")
 LOG_FILE = os.path.join(BASE, "selfbot.log")
 WIB = timezone(timedelta(hours=7))
@@ -193,7 +193,7 @@ async def send_sltp(client, sig):
 
 
 def _fmt_limit_price(v, digits):
-    """Format harga limit untuk area. 4477.4 → '4477', 4477.6 → '4478'."""
+    """Format harga limit untuk area. 4530.000 → '4530', 4477.6 → '4478'."""
     import math
     try:
         val = float(v)
@@ -201,7 +201,11 @@ def _fmt_limit_price(v, digits):
         return str(v)
     if digits <= 2:
         return str(int(math.floor(val + 0.5 - 1e-9)))
-    return f"{round(val, digits):.{digits}f}"
+    s = f"{round(val, digits):.{digits}f}"
+    # Hapus trailing nol: 4530.000 → 4530, 4530.500 → 4530.5
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s
 
 
 async def send_limit(client, sig):
@@ -235,18 +239,18 @@ async def send_limit(client, sig):
     base = float(price)
     sl_actual = float(sig.get("sl") or 0)
     if typ == "BUY":
-        # BUY LIMIT: area DI BAWAH harga (price .. price-area), SL di bawah lagi
+        # BUY LIMIT: area DI BAWAH harga (price-area sampai price), tampil high-low
         price_high = _fmt_limit_price(base, digits)
         price_low = _fmt_limit_price(base - area_range, digits)
         # SL ASLI dari MT5 kalau ada; fallback estimasi hanya kalau beneran 0
         sl_price = sl_actual if sl_actual > 0 else (base - sl_dist)
+        header = f"| {price_high} - {price_low}"   # 4477 - 4475
     else:
-        # SELL LIMIT: area DI ATAS harga (price .. price+area), SL di atas lagi
-        price_high = _fmt_limit_price(base + area_range, digits)
-        price_low = _fmt_limit_price(base, digits)
+        # SELL LIMIT: area JUGAA di bawah harga (price-area sampai price), tampil low-high
+        price_low = _fmt_limit_price(base - area_range, digits)
+        price_high = _fmt_limit_price(base, digits)
         sl_price = sl_actual if sl_actual > 0 else (base + sl_dist)
-
-    header = f"| {price_high} - {price_low}"
+        header = f"| {price_low} - {price_high}"   # 4528 - 4530
 
     if typ == "BUY":
         head_icon = "\U0001F4B0"  # 💰
@@ -283,7 +287,7 @@ async def send_limit(client, sig):
         entities=entities,
         random_id=random.randrange(-2**63, 2**63),
     ))
-    log(f"✅ SENT LIMIT ({typ}): {sym} {price_high}-{price_low} SL {sl_price} → chat {chat}")
+    log(f"✅ SENT LIMIT ({typ}): {sym} {header} SL {sl_price} → chat {chat}")
 
 
 async def flush_once(client):
