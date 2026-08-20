@@ -146,9 +146,22 @@ def save_sb_queue(q):
 
 
 # ---- queue builders ----
+# Channel tujuan: payload "test": true → channel TEST, selain itu → channel PROD.
+# Selfbot punya konstanta TG_CHAT_ID (prod) & TG_TEST_CHAT_ID; di sini cuma
+# nerusin flag chat_id supaya selfbot yang mutusin channel-nya.
+TEST_CHAT_ID = -1004479253024  # test channel (channel lama)
+
+
+def resolve_chat(sig, default_chat=None):
+    """Kalau payload bilang test → kirim ke test channel."""
+    if sig.get("test"):
+        return TEST_CHAT_ID
+    return default_chat
+
+
 def enqueue_entry(sig):
     q = load_sb_queue()
-    q.append({
+    item = {
         "type": "ENTRY",
         "symbol": sig.get("symbol"),
         "type_": sig.get("type"),
@@ -159,26 +172,36 @@ def enqueue_entry(sig):
         "position": sig.get("position"),
         "deal": sig.get("deal"),
         "ts": time.time(),
-    })
+    }
+    chat = resolve_chat(sig)
+    if chat:
+        item["chat_id"] = chat
+    q.append(item)
     save_sb_queue(q)
-    log(f"📤 ENQUEUE ENTRY: {sig.get('type')} {sig.get('symbol')} @ {sig.get('price')}")
+    target = "TEST" if chat else "PROD"
+    log(f"📤 ENQUEUE ENTRY: {sig.get('type')} {sig.get('symbol')} @ {sig.get('price')} → {target}")
 
 
-def enqueue_notice(text):
+def enqueue_notice(text, sig=None):
     """Send system notice to Telegram (non-trade alert)."""
     q = load_sb_queue()
-    q.append({
+    item = {
         "type": "NOTICE",
         "text": text,
         "ts": time.time(),
-    })
+    }
+    chat = resolve_chat(sig or {})
+    if chat:
+        item["chat_id"] = chat
+    q.append(item)
     save_sb_queue(q)
-    log(f"📤 NOTIFICATION: {text[:50]}")
+    target = "TEST" if chat else "PROD"
+    log(f"📤 NOTIFICATION: {text[:50]} → {target}")
 
 
 def enqueue_sltp(sig, delay):
     q = load_sb_queue()
-    q.append({
+    item = {
         "type": "SLTP",
         "symbol": sig.get("symbol"),
         "sl": sig.get("sl"),
@@ -187,9 +210,14 @@ def enqueue_sltp(sig, delay):
         "position": sig.get("position"),
         "ts": time.time(),
         "send_after": time.time() + delay,
-    })
+    }
+    chat = resolve_chat(sig)
+    if chat:
+        item["chat_id"] = chat
+    q.append(item)
     save_sb_queue(q)
-    log(f"📤 ENQUEUE SLTP: {sig.get('symbol')} SL={sig.get('sl')} TP={sig.get('tp')} (+{delay}s)")
+    target = "TEST" if chat else "PROD"
+    log(f"📤 ENQUEUE SLTP: {sig.get('symbol')} SL={sig.get('sl')} TP={sig.get('tp')} (+{delay}s) → {target}")
 
 
 def enqueue_limit(sig):
@@ -214,7 +242,7 @@ def enqueue_limit(sig):
         area_range, sl_distance = 2.0, 5.0
 
     q = load_sb_queue()
-    q.append({
+    item = {
         "type": "LIMIT",
         "symbol": sig.get("symbol"),
         "type_": sig.get("type"),
@@ -227,10 +255,15 @@ def enqueue_limit(sig):
         "area_range": area_range,
         "sl_distance": sl_distance,
         "ts": time.time(),
-    })
+    }
+    chat = resolve_chat(sig)
+    if chat:
+        item["chat_id"] = chat
+    q.append(item)
     save_sb_queue(q)
+    target = "TEST" if chat else "PROD"
     log(f"📤 ENQUEUE LIMIT: {sig.get('type')} LIMIT {sig.get('symbol')} @ {sig.get('price')} "
-        f"(area ±{area_range}, SL fallback {sl_distance})")
+        f"(area ±{area_range}, SL fallback {sl_distance}) → {target}")
 
 
 def send_complete(st, sig):
