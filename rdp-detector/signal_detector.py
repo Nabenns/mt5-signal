@@ -452,26 +452,30 @@ ORDER_TYPE_SELL_LIMIT = 3
 
 
 def detect_orders():
-    """Deteksi pending order BARU (BUY LIMIT / SELL LIMIT) → kirim action=LIMIT.
+    """Deteksi pending order (BUY LIMIT / SELL LIMIT) → kirim action=LIMIT.
 
-    State: _state["seen_orders"] = {ticket: ts}
-    - Order baru (ticket belum pernah dilihat) → kirim ke receiver.
-    - Order yang udah gak ada (eksekusi/dihapus) → bersihin dari state.
+    ALUR (per user request — TUNGGU SL DULU):
+    1. Order baru TANPA SL → simpan di pending_orders, JANGAN kirim.
+       Log: "⏳ ... nunggu SL diset..."
+    2. Begitu SL diset di MT5 → kirim SEKALI dengan SL ASLI (bukan estimasi).
+    3. Order hilang (dieksekusi/dihapus) TANPA SL pernah diset → gak dikirim,
+       cukup dibuang dari pending.
+    4. Order lama saat startup (seed window) → ditandai, gak dikirim.
     """
     orders = mt5.orders_get()
     if orders is None:
         return
 
+    now = time.time()
+    seed_cutoff = now - CONFIG["settings"].get("startup_seed_minutes", 5) * 60
+
     live_tickets = set()
+    pending = _state.setdefault("pending_orders", {})
     seen = _state.setdefault("seen_orders", {})
 
     for order in orders:
         ticket = str(order.ticket)
         live_tickets.add(ticket)
-
-        if ticket in seen:
-            continue
-        seen[ticket] = time.time()
 
         # Hanya BUY LIMIT & SELL LIMIT (bukan stop orders)
         if order.type not in (ORDER_TYPE_BUY_LIMIT, ORDER_TYPE_SELL_LIMIT):
@@ -480,22 +484,52 @@ def detect_orders():
         typ = "BUY" if order.type == ORDER_TYPE_BUY_LIMIT else "SELL"
         sym = clean_sym(order.symbol)
         digits = get_digits(order.symbol)
+        has_sl = float(order.sl or 0) > 0
 
-        payload = {
-            "action": "LIMIT",
-            "symbol": sym,
-            "type": typ,
-            "price": order.price_open,
-            "sl": float(order.sl or 0),
-            "tp": float(order.tp or 0),
-            "digits": digits,
-            "position": order.ticket,
-            "deal": order.ticket,
-        }
-        res = send_signal(payload)
-        log(f"📤 {typ} LIMIT {sym} @ {order.price_open} (SL={order.sl}, TP={order.tp}) → {res}")
+        # Seed mode saat startup: order lama cuma ditandai, gak dikirim
+        if order.time_setup < seed_cutoff:
+            seen[ticket] = now
+            pending.pop(ticket, None)
+            continue
 
-    # Bersihin ticket yang udah gak ada (order dieksekusi / dihapus)
+        if has_sl:
+            # SL udah diset → kirim SEKALI (kalau belum pernah)
+            if ticket not in seen:
+                payload = {
+                    "action": "LIMIT",
+                    "symbol": sym,
+                    "type": typ,
+                    "price": order.price_open,
+                    "sl": float(order.sl or 0),
+                    "tp": float(order.tp or 0),
+                    "digits": digits,
+                    "position": order.ticket,
+                    "deal": order.ticket,
+                }
+                res = send_signal(payload)
+                log(f"📤 {typ} LIMIT {sym} @ {order.price_open} (SL={order.sl}) → {res}")
+                seen[ticket] = now
+            pending.pop(ticket, None)
+        else:
+            # SL BELUM diset → simpan, TUNGGU sampai user set SL di MT5
+            if ticket not in seen:
+                if ticket not in pending:
+                    pending[ticket] = {
+                        "type": typ,
+                        "symbol": sym,
+                        "price": order.price_open,
+                        "digits": digits,
+                        "ts": now,
+                    }
+                    log(f"⏳ {typ} LIMIT {sym} @ {order.price_open} — nunggu SL diset...")
+
+    # Order yang hilang (dieksekusi/dihapus) TANPA SL → jangan kirim
+    for key in list(pending.keys()):
+        if key not in live_tickets:
+            log(f"🗑️ Pending LIMIT {key} hilang tanpa SL — gak dikirim")
+            pending.pop(key, None)
+
+    # Bersihin seen untuk order yang udah gak ada
     for key in list(seen.keys()):
         if key not in live_tickets:
             seen.pop(key, None)
@@ -586,7 +620,7 @@ def main():
             else:
                 log("ℹ️ Keeping old state")
     
-    _state = {"seen_deals": {}, "pos_state": {}, "seen_orders": {}, "vps_fail_streak": 0}
+    _state = {"seen_deals": {}, "pos_state": {}, "seen_orders": {}, "pending_orders": {}, "vps_fail_streak": 0}
     save_state()
 
     log("=" * 60)

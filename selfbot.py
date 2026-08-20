@@ -215,16 +215,18 @@ async def send_limit(client, sig):
 
     # Harga utama (limit price) & batas area
     base = float(price)
+    sl_actual = float(sig.get("sl") or 0)
     if typ == "BUY":
         # BUY LIMIT: area DI BAWAH harga (price .. price-area), SL di bawah lagi
         price_high = _fmt_limit_price(base, digits)
         price_low = _fmt_limit_price(base - area_range, digits)
-        sl_price = sig.get("sl") or (base - sl_dist)
+        # SL ASLI dari MT5 kalau ada; fallback estimasi hanya kalau beneran 0
+        sl_price = sl_actual if sl_actual > 0 else (base - sl_dist)
     else:
         # SELL LIMIT: area DI ATAS harga (price .. price+area), SL di atas lagi
         price_high = _fmt_limit_price(base + area_range, digits)
         price_low = _fmt_limit_price(base, digits)
-        sl_price = sig.get("sl") or (base + sl_dist)
+        sl_price = sl_actual if sl_actual > 0 else (base + sl_dist)
 
     header = f"| {price_high} - {price_low}"
 
