@@ -153,7 +153,11 @@ TEST_CHAT_ID = -1004479253024  # test channel (channel lama)
 
 
 def resolve_chat(sig, default_chat=None):
-    """Kalau payload bilang test → kirim ke test channel."""
+    """Kalau payload bilang test → WAJIB kirim ke test channel, gak bisa lain.
+
+    Proteksi berlapis: flag test=true memaksa channel TEST.
+    Payload dari detector (tanpa flag test) → default_chat / PROD.
+    """
     if sig.get("test"):
         return TEST_CHAT_ID
     return default_chat
@@ -171,6 +175,7 @@ def enqueue_entry(sig):
         "digits": int(sig.get("digits", 2)),
         "position": sig.get("position"),
         "deal": sig.get("deal"),
+        "test": bool(sig.get("test")),
         "ts": time.time(),
     }
     chat = resolve_chat(sig)
@@ -188,6 +193,7 @@ def enqueue_notice(text, sig=None):
     item = {
         "type": "NOTICE",
         "text": text,
+        "test": bool((sig or {}).get("test")),
         "ts": time.time(),
     }
     chat = resolve_chat(sig or {})
@@ -208,6 +214,7 @@ def enqueue_sltp(sig, delay):
         "tp": sig.get("tp"),
         "deal": sig.get("deal"),
         "position": sig.get("position"),
+        "test": bool(sig.get("test")),
         "ts": time.time(),
         "send_after": time.time() + delay,
     }
@@ -252,6 +259,7 @@ def enqueue_limit(sig):
         "digits": int(sig.get("digits", 2)),
         "position": sig.get("position"),
         "deal": sig.get("deal"),
+        "test": bool(sig.get("test")),
         "area_range": area_range,
         "sl_distance": sl_distance,
         "ts": time.time(),

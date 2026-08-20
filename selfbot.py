@@ -40,7 +40,16 @@ _seen_lock = asyncio.Lock()
 
 
 def target_chat(sig):
-    """Channel tujuan: override per-pesan (chat_id) atau prod default."""
+    """Channel tujuan dengan PROTEKSI KETAT.
+
+    Rules:
+    1. Kalau sig.test == True → SELALU test channel. Gak peduli chat_id
+       yang dikirim (proteksi kalau payload nyasar ke prod).
+    2. Kalau ada chat_id eksplisit (dari receiver) → pakai itu.
+    3. Default → channel PROD.
+    """
+    if sig.get("test"):
+        return TG_TEST_CHAT_ID
     cid = sig.get("chat_id")
     if cid:
         return int(cid)
