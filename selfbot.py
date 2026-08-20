@@ -18,6 +18,7 @@ from telethon import TelegramClient
 from telethon.errors import FloodWaitError
 from telethon.tl.functions.messages import SendMessageRequest as SendReq
 from telethon.tl.types import (
+    MessageEntityBold,
     MessageEntityCustomEmoji,
     MessageEntityItalic,
 )
@@ -142,6 +143,11 @@ async def send_entry(client, sig):
     if emoji_id:
         entities.append(MessageEntityCustomEmoji(offset=0, length=2, document_id=emoji_id))
 
+    # Bold harga: posisi harga di string
+    price_start = base.rfind(f" {harga}")
+    if price_start >= 0:
+        entities.append(MessageEntityBold(offset=price_start + 1, length=len(harga)))
+
     await client(SendReq(
         peer=await client.get_entity(chat),
         message=base,
@@ -166,9 +172,21 @@ async def send_sltp(client, sig):
         return
     
     text = " | ".join(parts)
+    
+    # Bold semua harga (SL & TP)
+    entities = []
+    offset = 0
+    for part in parts:
+        label, _, val = part.partition(" ")
+        price_start = text.find(val, offset)
+        if price_start >= 0:
+            entities.append(MessageEntityBold(offset=price_start, length=len(val)))
+            offset = price_start + len(val)
+    
     await client(SendReq(
         peer=await client.get_entity(chat),
         message=text,
+        entities=entities,
         random_id=random.randrange(-2**63, 2**63),
     ))
     log(f"✅ SENT SLTP: {text} → chat {chat}")
@@ -247,7 +265,17 @@ async def send_limit(client, sig):
     )
 
     # Custom emoji BUY/SELL di posisi awal (2 char) — sama seperti send_entry
-    entities = [MessageEntityCustomEmoji(offset=0, length=2, document_id=emoji_id)]
+    entities = []
+    entities.append(MessageEntityCustomEmoji(offset=0, length=2, document_id=emoji_id))
+
+    # Bold harga: header area (price_high - price_low) + SL
+    hdr_start = text.find(header)
+    if hdr_start >= 0:
+        entities.append(MessageEntityBold(offset=hdr_start, length=len(header)))
+    sl_str = _fmt_limit_price(sl_price, digits)
+    sl_start = text.find(f"SL : {sl_str}")
+    if sl_start >= 0:
+        entities.append(MessageEntityBold(offset=sl_start + 5, length=len(sl_str)))
 
     await client(SendReq(
         peer=await client.get_entity(chat),
