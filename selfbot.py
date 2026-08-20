@@ -129,32 +129,42 @@ async def send_entry(client, sig):
     harga = fmt_harga(sig.get("price", 0), digits)
     chat = target_chat(sig)
 
+    # Zone area (sama kaya LIMIT):
+    # BUY  → harga - (harga-2)  → 4600 - 4598 (high-low)
+    # SELL → (harga-2) - harga  → 4598 - 4600 (low-high, kebalikan)
+    base = float(sig.get("price") or 0)
+    area_range = float(sig.get("area_range", 2))
+    zone_low = fmt_harga(base - area_range, digits)
+
     if typ == "BUY":
-        base = f"\U0001F4B0\u00a0{typ} NOW {sym} {harga}"
+        zone = f"{harga} - {zone_low}"
+        base_msg = f"\U0001F4B0\u00a0{typ} NOW {sym} {zone}"
         emoji_id = BUY_EMOJI_ID
     elif typ == "SELL":
-        base = f"\U0001F53D\u00a0{typ} NOW {sym} {harga}"
+        zone = f"{zone_low} - {harga}"
+        base_msg = f"\U0001F53D\u00a0{typ} NOW {sym} {zone}"
         emoji_id = SELL_EMOJI_ID
     else:
-        base = f"{typ} NOW {sym} {harga}"
+        zone = harga
+        base_msg = f"{typ} NOW {sym} {zone}"
         emoji_id = None
 
     entities = []
     if emoji_id:
         entities.append(MessageEntityCustomEmoji(offset=0, length=2, document_id=emoji_id))
 
-    # Bold harga: posisi harga di string
-    price_start = base.rfind(f" {harga}")
-    if price_start >= 0:
-        entities.append(MessageEntityBold(offset=price_start + 1, length=len(harga)))
+    # Bold zone harga
+    zone_start = base_msg.rfind(zone)
+    if zone_start >= 0:
+        entities.append(MessageEntityBold(offset=zone_start, length=len(zone)))
 
     await client(SendReq(
         peer=await client.get_entity(chat),
-        message=base,
+        message=base_msg,
         entities=entities,
         random_id=random.randrange(-2**63, 2**63),
     ))
-    log(f"✅ SENT ENTRY ({typ}): {sym} {harga} → chat {chat}")
+    log(f"✅ SENT ENTRY ({typ}): {sym} {zone} → chat {chat}")
 
 
 async def send_sltp(client, sig):
