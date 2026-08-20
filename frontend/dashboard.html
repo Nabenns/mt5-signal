@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MT5 Signal Relay System</title>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #000000;
+            --primary: #ff6b6b;
+            --secondary: #4ecdc4;
+            --accent: #ffe66d;
+            --border-color: #000000;
+            --card-bg: #f7f9fa;
+            --shadow: 4px 4px 0px var(--border-color);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: linear-gradient(135deg, var(--accent) 0%, #fff 100%);
+            color: var(--text-color);
+            min-height: 100vh;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        .container { max-width: 1400px; margin: 0 auto; }
+
+        header {
+            background: white;
+            border: 4px solid var(--border-color);
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: var(--shadow);
+            position: relative;
+        }
+
+        header::before {
+            content: '';
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            width: 40px;
+            height: 40px;
+            background: var(--primary);
+            border: 3px solid var(--border-color);
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: -1px;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle { font-size: 1.2rem; opacity: 0.7; }
+
+        /* Status Card */
+        .status-card {
+            background: white;
+            border: 4px solid var(--border-color);
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            box-shadow: var(--shadow);
+        }
+
+        .status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            font-weight: 700;
+            border: 3px solid var(--border-color);
+            background: var(--secondary);
+            text-transform: uppercase;
+        }
+
+        .status-badge.error { background: var(--primary); }
+
+        /* Grid Layout */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 4px solid var(--border-color);
+            padding: 1.5rem;
+            box-shadow: var(--shadow);
+        }
+
+        .card-title {
+            font-size: 1.5rem;
+            font-weight: 900;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            border-bottom: 3px solid var(--border-color);
+            padding-bottom: 0.5rem;
+        }
+
+        /* Tables */
+        table { width: 100%; border-collapse: collapse; }
+        th, td {
+            padding: 0.75rem;
+            border: 2px solid var(--border-color);
+            text-align: left;
+        }
+        th {
+            background: var(--secondary);
+            font-weight: 900;
+            text-transform: uppercase;
+        }
+        tr:nth-child(even) { background: white; }
+
+        /* Forms */
+        .form-group { margin-bottom: 1rem; }
+        label {
+            display: block;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+        }
+        input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 3px solid var(--border-color);
+            background: white;
+            font-family: 'Courier New', monospace;
+            font-size: 1rem;
+        }
+        input:focus { outline: none; border-color: var(--primary); }
+
+        /* Buttons */
+        button {
+            background: var(--secondary);
+            color: var(--text-color);
+            border: 3px solid var(--border-color);
+            padding: 0.75rem 1.5rem;
+            font-size: 1rem;
+            font-weight: 900;
+            cursor: pointer;
+            text-transform: uppercase;
+            margin-right: 1rem;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: translate(-2px, -2px);
+            box-shadow: 4px 4px 0px var(--border-color);
+        }
+        button:active {
+            transform: translate(0, 0);
+            box-shadow: 2px 2px 0px var(--border-color);
+        }
+        button.danger { background: var(--primary); }
+        button.success { background: var(--secondary); }
+
+        /* Logs */
+        .logs-container {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 2px solid var(--border-color);
+            padding: 1rem;
+            background: white;
+        }
+        .log-entry {
+            padding: 0.5rem;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.9rem;
+        }
+        .log-time { color: var(--primary); font-weight: 700; }
+        .log-type { font-weight: 900; margin-right: 0.5rem; }
+        .log-type.entry { background: var(--secondary); }
+        .log-type.close { background: var(--primary); }
+        .log-type.reset { background: orange; }
+
+        /* Stats */
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        .stat-item {
+            padding: 1rem;
+            border: 2px solid var(--border-color);
+            background: white;
+        }
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 900;
+            color: var(--primary);
+        }
+        .stat-label { font-size: 0.9rem; text-transform: uppercase; }
+
+        /* Manual Action Section */
+        .manual-actions {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            background: white;
+            border: 4px solid var(--border-color);
+            box-shadow: var(--shadow);
+        }
+
+        .action-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            align-items: end;
+            margin-bottom: 1rem;
+        }
+
+        @media (max-width: 768px) {
+            body { padding: 1rem; }
+            .grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>MT5 Signal Relay System</h1>
+            <p class="subtitle">Production Channel: -1001816822545 • NeoBrutalism Design</p>
+        </header>
+
+        <!-- Status -->
+        <div class="status-card">
+            <div class="status-header">
+                <h2>System Status</h2>
+                <span id="statusBadge" class="status-badge">Loading...</span>
+            </div>
+            <div id="statusMessage">Checking connection...</div>
+            <div id="healthTimestamp" style="margin-top: 1rem; font-size: 0.9rem;"></div>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="grid">
+            <!-- Current Open Positions -->
+            <div class="card">
+                <h3 class="card-title">Current Open Positions</h3>
+                <table id="positionsTable">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Type</th>
+                            <th>Volume</th>
+                            <th>Entry Price</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positionsBody">
+                        <tr><td colspan="5" style="text-align: center;">No active positions</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Configuration -->
+            <div class="card">
+                <h3 class="card-title">Detector Configuration</h3>
+                <div class="form-group">
+                    <label>MT5 Login</label>
+                    <input type="number" id="cfgLogin" placeholder="Enter MT5 login">
+                </div>
+                <div class="form-group">
+                    <label>Server Name</label>
+                    <input type="text" id="cfgServer" placeholder="e.g. HFMarketsGlobal-Demo">
+                </div>
+                <div class="form-group">
+                    <label>Poll Interval (seconds)</label>
+                    <input type="number" step="0.1" id="cfgPoll" value="1.0" placeholder="1.0">
+                </div>
+                <div class="btn-group">
+                    <button onclick="saveConfig()" class="success">Update Configuration</button>
+                    <button onclick="resetSystem()" class="danger">Clear All Queues</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Manual Actions -->
+        <div class="manual-actions">
+            <h3 class="card-title">Manual Signal Override</h3>
+            <p style="margin-bottom: 1rem; opacity: 0.7;">Manually trigger signals for testing or emergency updates</p>
+            
+            <div class="action-form">
+                <div class="form-group">
+                    <label>Action Type</label>
+                    <select id="signalAction" style="width: 100%; padding: 0.75rem; border: 3px solid var(--border-color); background: white; font-family: 'Courier New';">
+                        <option value="OPEN">OPEN Position</option>
+                        <option value="CLOSE">CLOSE Position</option>
+                        <option value="SLTP">SL/TP Update</option>
+                        <option value="LIMIT">LIMIT (BUY/SELL Limit)</option>
+                        <option value="NOTICE">System Notice</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Symbol</label>
+                    <input type="text" id="signalSymbol" placeholder="BTCUSD">
+                </div>
+                <div class="form-group">
+                    <label>Price</label>
+                    <input type="number" step="0.001" id="signalPrice" placeholder="Entry price">
+                </div>
+                <div class="form-group">
+                    <label>Volume</label>
+                    <input type="number" step="0.01" id="signalVolume" placeholder="1.0" value="1.0">
+                </div>
+                <div class="form-group">
+                    <label>Position ID (optional)</label>
+                    <input type="number" id="signalPosId" placeholder="If known">
+                </div>
+            </div>
+
+            <div style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" id="testChannel" style="width: auto; transform: scale(1.3);">
+                <label for="testChannel" style="margin: 0; display: inline;">Kirim ke channel TEST (-1004479253024)</label>
+            </div>
+            
+            <button onclick="sendManualSignal()">Send Manual Signal</button>
+            <button onclick="checkPositions()">Refresh Positions</button>
+        </div>
+
+        <!-- Recent Activity & Logs -->
+        <div class="grid" style="margin-top: 2rem;">
+            <div class="card">
+                <h3 class="card-title">Activity Log - Last 50 Events</h3>
+                <div class="logs-container" id="logsContainer">
+                    Loading logs...
+                </div>
+            </div>
+
+            <!-- Statistics -->
+            <div class="card">
+                <h3 class="card-title">System Statistics</h3>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="activeLocksCount">-</div>
+                        <div class="stat-label">Active Locks</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="queuedSignals">-</div>
+                        <div class="stat-label">Queued Signals</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalLogs">-</div>
+                        <div class="stat-label">Total Events</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="lastEventTime">-</div>
+                        <div class="stat-label">Last Event</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API Base URL
+        const API_BASE = 'https://hirmes.bensserver.cloud/api';
+        
+        // Fetch data with error handling
+        async function fetchAPI(endpoint, options = {}) {
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, {
+                    ...options,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                return null;
+            }
+        }
+
+        // Check system health
+        async function checkHealth() {
+            const data = await fetchAPI('/health');
+            if (data) {
+                document.getElementById('statusBadge').textContent = 'ONLINE';
+                document.getElementById('statusBadge').className = 'status-badge';
+                document.getElementById('statusMessage').textContent = `Receiver running • Uptime visible`;
+                document.getElementById('healthTimestamp').textContent = 
+                    `Health checked: ${new Date().toLocaleString()}`;
+                return true;
+            } else {
+                document.getElementById('statusBadge').textContent = 'OFFLINE';
+                document.getElementById('statusBadge').className = 'status-badge error';
+                document.getElementById('statusMessage').textContent = 'Cannot connect to receiver';
+                return false;
+            }
+        }
+
+        // Load positions
+        async function loadPositions() {
+            const data = await fetchAPI('/positions');
+            const tbody = document.getElementById('positionsBody');
+            
+            if (!data || !data.positions || data.positions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">No active positions</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = data.positions.map(pos => `
+                <tr>
+                    <td><strong>${pos.symbol}</strong></td>
+                    <td>${pos.position_type === 0 ? 'BUY' : 'SELL'}</td>
+                    <td>${pos.volume} lot</td>
+                    <td>${pos.price_open.toFixed(5)}</td>
+                    <td>${pos.status || 'holding'}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Load and display logs
+        async function loadLogs() {
+            const data = await fetchAPI('/logs?limit=50');
+            const container = document.getElementById('logsContainer');
+            
+            if (!data || !data.logs || data.logs.length === 0) {
+                container.innerHTML = '<div class="log-entry">No recent activity</div>';
+                return;
+            }
+
+            document.getElementById('totalLogs').textContent = data.total || data.logs.length;
+            document.getElementById('lastEventTime').textContent = new Date().toLocaleTimeString();
+
+            container.innerHTML = data.logs.slice(-50).reverse().map(log => `
+                <div class="log-entry">
+                    <span class="log-time">[${new Date(log.timestamp).toLocaleTimeString()}]</span>
+                    <span class="log-type ${log.type === 'close' ? 'close' : (log.type === 'entry' ? 'entry' : 'other')}">${log.type.toUpperCase()}</span>
+                    ${log.message || log.event || ''}
+                </div>
+            `).join('');
+        }
+
+        // Load configuration
+        async function loadConfig() {
+            const data = await fetchAPI('/config/detector?mask=1');
+            if (data && data.config) {
+                document.getElementById('cfgLogin').value = data.config.mt5?.login || '';
+                document.getElementById('cfgServer').value = data.config.mt5?.server || '';
+                document.getElementById('cfgPoll').value = data.config.settings?.poll_interval || 1.0;
+            }
+        }
+
+        // Save configuration
+        async function saveConfig() {
+            const config = {
+                mt5: {
+                    login: parseInt(document.getElementById('cfgLogin').value),
+                    server: document.getElementById('cfgServer').value,
+                    terminal_path: 'C:\\Program Files\\MetaTrader 5\\terminal64.exe'
+                },
+                settings: {
+                    poll_interval: parseFloat(document.getElementById('cfgPoll').value)
+                }
+            };
+
+            const result = await fetchAPI('/config/detector', {
+                method: 'PUT',
+                body: JSON.stringify({ config })
+            });
+
+            if (result && result.status === 'success') {
+                alert('Configuration updated successfully');
+            } else {
+                alert('Failed to update configuration');
+            }
+        }
+
+        // Reset system
+        async function resetSystem() {
+            if (!confirm('Are you sure you want to clear all queues and locks? This will not affect open positions.')) {
+                return;
+            }
+
+            const result = await fetchAPI('/reset', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ reason: 'Dashboard manual reset' })
+            });
+
+            if (result && (result.status === 'success' || result.status === 'reset_blocked')) {
+                alert(result.status === 'success' ? 'Queues cleared' : `Reset blocked - Active positions: ${result.active_positions?.length || 0}`);
+            } else {
+                alert('Failed to reset system');
+            }
+        }
+
+        // Send manual signal
+        async function sendManualSignal() {
+            const action = document.getElementById('signalAction').value;
+            const symbol = document.getElementById('signalSymbol').value.trim().toUpperCase();
+            const price = parseFloat(document.getElementById('signalPrice').value);
+            const volume = parseFloat(document.getElementById('signalVolume').value) || 1.0;
+            const positionId = document.getElementById('signalPosId').value;
+            const test = document.getElementById('testChannel').checked;
+
+            if (!symbol || isNaN(price)) {
+                alert('Please enter valid symbol and price');
+                return;
+            }
+
+            const payload = { action, symbol, price, volume };
+            if (positionId) payload.position_id = parseInt(positionId);
+            if (test) payload.test = true;
+
+            // Tambah field khusus untuk LIMIT
+            if (action === 'LIMIT') {
+                payload.type = 'BUY'; // default, bisa diubah
+            }
+
+            const result = await fetchAPI('/signal', {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+
+            if (result) {
+                alert(`Signal sent: ${JSON.stringify(result)}${test ? ' (TEST channel)' : ' (PROD channel)'}`);
+                loadLogs();
+                loadPositions();
+            } else {
+                alert('Failed to send signal');
+            }
+        }
+
+        // Refresh positions
+        async function checkPositions() {
+            await loadPositions();
+        }
+
+        // Auto-refresh every 5 seconds
+        let refreshInterval;
+        function startAutoRefresh() {
+            refreshInterval = setInterval(async () => {
+                await Promise.all([
+                    checkHealth(),
+                    loadPositions(),
+                    loadLogs()
+                ]);
+            }, 5000);
+        }
+
+        // Initialize
+        async function init() {
+            await Promise.all([
+                checkHealth(),
+                loadPositions(),
+                loadLogs(),
+                loadConfig()
+            ]);
+            startAutoRefresh();
+        }
+
+        // Start when DOM loads
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
