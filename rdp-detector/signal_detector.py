@@ -437,6 +437,69 @@ def detect_sltp():
             log(f"📤 SLTP {cur['symbol']} SL={pos.sl} TP={pos.tp} → {res}")
             _state["pos_state"][key] = cur
 
+    # Bersihin pos_state untuk posisi yang udah gak ada
+    for key in list(_state["pos_state"].keys()):
+        if key not in live_ids:
+            _state["pos_state"].pop(key, None)
+
+
+# ============================================================
+# PENDING ORDER DETECTOR (BUY LIMIT / SELL LIMIT)
+# ============================================================
+# ORDER_TYPE_BUY_LIMIT = 2, ORDER_TYPE_SELL_LIMIT = 3 (MT5 constants)
+ORDER_TYPE_BUY_LIMIT = 2
+ORDER_TYPE_SELL_LIMIT = 3
+
+
+def detect_orders():
+    """Deteksi pending order BARU (BUY LIMIT / SELL LIMIT) → kirim action=LIMIT.
+
+    State: _state["seen_orders"] = {ticket: ts}
+    - Order baru (ticket belum pernah dilihat) → kirim ke receiver.
+    - Order yang udah gak ada (eksekusi/dihapus) → bersihin dari state.
+    """
+    orders = mt5.orders_get()
+    if orders is None:
+        return
+
+    live_tickets = set()
+    seen = _state.setdefault("seen_orders", {})
+
+    for order in orders:
+        ticket = str(order.ticket)
+        live_tickets.add(ticket)
+
+        if ticket in seen:
+            continue
+        seen[ticket] = time.time()
+
+        # Hanya BUY LIMIT & SELL LIMIT (bukan stop orders)
+        if order.type not in (ORDER_TYPE_BUY_LIMIT, ORDER_TYPE_SELL_LIMIT):
+            continue
+
+        typ = "BUY" if order.type == ORDER_TYPE_BUY_LIMIT else "SELL"
+        sym = clean_sym(order.symbol)
+        digits = get_digits(order.symbol)
+
+        payload = {
+            "action": "LIMIT",
+            "symbol": sym,
+            "type": typ,
+            "price": order.price_open,
+            "sl": float(order.sl or 0),
+            "tp": float(order.tp or 0),
+            "digits": digits,
+            "position": order.ticket,
+            "deal": order.ticket,
+        }
+        res = send_signal(payload)
+        log(f"📤 {typ} LIMIT {sym} @ {order.price_open} (SL={order.sl}, TP={order.tp}) → {res}")
+
+    # Bersihin ticket yang udah gak ada (order dieksekusi / dihapus)
+    for key in list(seen.keys()):
+        if key not in live_tickets:
+            seen.pop(key, None)
+
 
 # ============================================================
 # HEALTH CHECKER
@@ -523,7 +586,7 @@ def main():
             else:
                 log("ℹ️ Keeping old state")
     
-    _state = {"seen_deals": {}, "pos_state": {}, "vps_fail_streak": 0}
+    _state = {"seen_deals": {}, "pos_state": {}, "seen_orders": {}, "vps_fail_streak": 0}
     save_state()
 
     log("=" * 60)
@@ -557,6 +620,7 @@ def main():
             # 3. Deteksi event baru
             detect_deals()
             detect_sltp()
+            detect_orders()
 
             # 4. Health check berkala
             if time.time() - last_health >= CONFIG["settings"].get("health_interval", 60):

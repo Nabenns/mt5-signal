@@ -154,6 +154,87 @@ async def send_sltp(client, sig):
     log(f"✅ SENT SLTP: {text}")
 
 
+def _fmt_limit_price(v, digits):
+    """Format harga limit untuk area. 4477.4 → '4477', 4477.6 → '4478'."""
+    import math
+    try:
+        val = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    if digits <= 2:
+        return str(int(math.floor(val + 0.5 - 1e-9)))
+    return f"{round(val, digits):.{digits}f}"
+
+
+async def send_limit(client, sig):
+    """Kirim pesan pending order (BUY LIMIT / SELL LIMIT) format template user.
+
+    Contoh (BUY LIMIT @ 4477, area 4477-4474, SL 4471):
+        💰 BUY XAUUSD | 4477 - 4474
+        SL : 4471
+
+        TP 1 : 60 PIPS
+        TP 2 : 120 PIPS
+        TP 3 : ⁉️
+
+        JAGA RISK KALIAN GUYS ‼️
+
+    Contoh (SELL LIMIT @ 4477, area 4477-4479, SL 4481):
+        🔻 SELL XAUUSD | 4477 - 4479
+        SL : 4481
+        (template TP & footer sama)
+    """
+    sym = clean_sym(sig.get("symbol"))
+    typ = str(sig.get("type_") or sig.get("type") or "BUY").upper()
+    digits = int(sig.get("digits", 2))
+
+    price = sig.get("price") or 0
+    area_range = float(sig.get("area_range", 2))
+    sl_dist = float(sig.get("sl_distance", 5))
+
+    # Harga utama (limit price) & batas area
+    base = float(price)
+    if typ == "BUY":
+        # BUY LIMIT: area DI BAWAH harga (price .. price-area), SL di bawah lagi
+        price_high = _fmt_limit_price(base, digits)
+        price_low = _fmt_limit_price(base - area_range, digits)
+        sl_price = sig.get("sl") or (base - sl_dist)
+    else:
+        # SELL LIMIT: area DI ATAS harga (price .. price+area), SL di atas lagi
+        price_high = _fmt_limit_price(base + area_range, digits)
+        price_low = _fmt_limit_price(base, digits)
+        sl_price = sig.get("sl") or (base + sl_dist)
+
+    header = f"| {price_high} - {price_low}"
+
+    if typ == "BUY":
+        head_icon = "\U0001F4B0"  # 💰
+        emoji_id = BUY_EMOJI_ID
+    else:
+        head_icon = "\U0001F53D"  # 🔻
+        emoji_id = SELL_EMOJI_ID
+
+    text = (
+        f"{head_icon} {typ} {sym} {header}\n"
+        f"SL : {_fmt_limit_price(sl_price, digits)}\n\n"
+        f"TP 1 : 60 PIPS\n"
+        f"TP 2 : 120 PIPS\n"
+        f"TP 3 : \u2049\ufe0f\n\n"
+        f"JAGA RISK KALIAN GUYS \u203c\ufe0f"
+    )
+
+    # Custom emoji BUY/SELL di posisi awal (2 char) — sama seperti send_entry
+    entities = [MessageEntityCustomEmoji(offset=0, length=2, document_id=emoji_id)]
+
+    await client(SendReq(
+        peer=await client.get_entity(TG_CHAT_ID),
+        message=text,
+        entities=entities,
+        random_id=random.randrange(-2**63, 2**63),
+    ))
+    log(f"✅ SENT LIMIT ({typ}): {sym} {price_high}-{price_low} SL {sl_price}")
+
+
 async def flush_once(client):
     q = load_queue()
     if not q:
@@ -179,6 +260,8 @@ async def flush_once(client):
         try:
             if sig.get("type") == "SLTP":
                 await send_sltp(client, sig)
+            elif sig.get("type") == "LIMIT":
+                await send_limit(client, sig)
             elif sig.get("type") == "NOTICE":
                 # Send system notice as plain text (no emoji)
                 text = sig.get("text", "")

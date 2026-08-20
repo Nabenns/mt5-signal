@@ -11,6 +11,9 @@
     "poll_interval": 1.0,
     "health_interval": 60,
     "startup_seed_minutes": 5,
-    "notify_restart": true
+    "notify_restart": true,
+    "config_poll_interval": 30,
+    "limit_area_range": 2,
+    "limit_sl_distance": 5
   }
 }

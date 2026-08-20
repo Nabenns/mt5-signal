@@ -66,6 +66,8 @@ DEFAULT_DETECTOR_CONFIG = {
         "startup_seed_minutes": 5,
         "notify_restart": True,
         "config_poll_interval": 30,
+        "limit_area_range": 2,
+        "limit_sl_distance": 5,
     },
     "meta": {"version": 0, "updated_at": 0},
 }
@@ -188,6 +190,47 @@ def enqueue_sltp(sig, delay):
     })
     save_sb_queue(q)
     log(f"📤 ENQUEUE SLTP: {sig.get('symbol')} SL={sig.get('sl')} TP={sig.get('tp')} (+{delay}s)")
+
+
+def enqueue_limit(sig):
+    """Enqueue pesan pending order (BUY LIMIT / SELL LIMIT) ke Telegram.
+
+    Format pesan (template fixed, lihat selfbot.send_limit):
+        💰 BUY XAUUSD | 4477 - 4474
+        SL : 4471
+        (blank)
+        TP 1 : 60 PIPS
+        TP 2 : 120 PIPS
+        TP 3 : ⁉️
+        (blank)
+        JAGA RISK KALIAN GUYS ‼️
+    """
+    # Baca area range & SL distance dari detector config (source of truth di VPS)
+    try:
+        dcfg = load_detector_config()
+        area_range = float(dcfg.get("settings", {}).get("limit_area_range", 2))
+        sl_distance = float(dcfg.get("settings", {}).get("limit_sl_distance", 5))
+    except (TypeError, ValueError):
+        area_range, sl_distance = 2.0, 5.0
+
+    q = load_sb_queue()
+    q.append({
+        "type": "LIMIT",
+        "symbol": sig.get("symbol"),
+        "type_": sig.get("type"),
+        "price": sig.get("price"),
+        "sl": sig.get("sl", 0),
+        "tp": sig.get("tp", 0),
+        "digits": int(sig.get("digits", 2)),
+        "position": sig.get("position"),
+        "deal": sig.get("deal"),
+        "area_range": area_range,
+        "sl_distance": sl_distance,
+        "ts": time.time(),
+    })
+    save_sb_queue(q)
+    log(f"📤 ENQUEUE LIMIT: {sig.get('type')} LIMIT {sig.get('symbol')} @ {sig.get('price')} "
+        f"(area ±{area_range}, SL fallback {sl_distance})")
 
 
 def send_complete(st, sig):
@@ -324,6 +367,25 @@ def on_close(st, d):
             log(f"🗑️ Pending {symbol} pos {position} dibuang (closed)")
 
     return {"status": "closed"}
+
+
+def on_limit(st, d):
+    """Pending order baru (BUY LIMIT / SELL LIMIT) terpasang di MT5.
+
+    Payload dari detector:
+        action=LIMIT, type=BUY/SELL, symbol, price (limit price),
+        position (order ticket), deal (order ticket), digits.
+    """
+    symbol = d.get("symbol")
+    typ = str(d.get("type") or "BUY").upper()
+    position = d.get("position") or d.get("deal") or 0
+
+    if typ not in ("BUY", "SELL"):
+        log(f"🚫 LIMIT {symbol} type {typ} tidak dikenal — skip")
+        return {"status": "skipped", "reason": f"unknown_type_{typ}"}
+
+    enqueue_limit(d)
+    return {"status": "sent", "kind": f"{typ}_LIMIT"}
 
 
 def flush_expired(st):
@@ -566,6 +628,8 @@ class Handler(BaseHTTPRequestHandler):
             dedup_key = ("SLTP", d.get("symbol"), d.get("position"), d.get("sl"), d.get("tp"))
         elif action == "CLOSE":
             dedup_key = ("CLOSE", d.get("position") or d.get("deal"))
+        elif action == "LIMIT":
+            dedup_key = ("LIMIT", d.get("deal") or d.get("position"))
         else:
             dedup_key = None
 
@@ -586,6 +650,8 @@ class Handler(BaseHTTPRequestHandler):
                 res = on_sltp(st, d)
             elif action == "CLOSE":
                 res = on_close(st, d)
+            elif action == "LIMIT":
+                res = on_limit(st, d)
             elif action == "NOTICE":
                 enqueue_notice(d.get("text", ""))
                 res = {"status": "sent"}
