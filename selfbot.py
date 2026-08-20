@@ -208,6 +208,27 @@ def _fmt_limit_price(v, digits):
     return s
 
 
+def _pip_size(price, digits):
+    """Ukuran 1 pip dalam satuan harga.
+
+    - Forex 5 digit (1.08352)        → 0.0001
+    - Gold 3 digit (4530.000)        → 0.1   (60 pips = 6.0)
+    - JPY 3 digit (109.123)          → 0.01
+    - BTC/index 2 digit (63000.00)   → 1.0
+    """
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        price = 0
+    if digits >= 5:
+        return 0.0001
+    if digits == 4:
+        return 0.001 if price >= 1000 else 0.0001
+    if digits == 3:
+        return 0.1 if price >= 1000 else 0.01
+    return 1.0 if price >= 1000 else 0.01
+
+
 async def send_limit(client, sig):
     """Kirim pesan pending order (BUY LIMIT / SELL LIMIT) format template user.
 
@@ -238,18 +259,21 @@ async def send_limit(client, sig):
     # Harga utama (limit price) & batas area
     base = float(price)
     sl_actual = float(sig.get("sl") or 0)
+    # SL OTOMATIS: total 60 pips dari limit price (SELALU, abaikan sl_distance)
+    auto_sl = base + _pip_size(base, digits) * 60 if typ == "SELL" else base - _pip_size(base, digits) * 60
     if typ == "BUY":
-        # BUY LIMIT: area DI BAWAH harga (price-area sampai price), tampil high-low
+        # BUY LIMIT: zone DI BAWAH harga (price-area sampai price), tampil high-low
         price_high = _fmt_limit_price(base, digits)
         price_low = _fmt_limit_price(base - area_range, digits)
-        # SL ASLI dari MT5 kalau ada; fallback estimasi hanya kalau beneran 0
-        sl_price = sl_actual if sl_actual > 0 else (base - sl_dist)
+        # SL ASLI dari MT5 kalau ada; fallback auto 60 pips
+        sl_price = sl_actual if sl_actual > 0 else auto_sl
         header = f"| {price_high} - {price_low}"   # 4477 - 4475
     else:
-        # SELL LIMIT: area JUGAA di bawah harga (price-area sampai price), tampil low-high
-        price_low = _fmt_limit_price(base - area_range, digits)
-        price_high = _fmt_limit_price(base, digits)
-        sl_price = sl_actual if sl_actual > 0 else (base + sl_dist)
+        # SELL LIMIT: zone DI ATAS harga (price sampai price+area), tampil low-high
+        price_low = _fmt_limit_price(base, digits)
+        price_high = _fmt_limit_price(base + area_range, digits)
+        # SL ASLI dari MT5 kalau ada; fallback auto 60 pips
+        sl_price = sl_actual if sl_actual > 0 else auto_sl
         header = f"| {price_low} - {price_high}"   # 4528 - 4530
 
     if typ == "BUY":
