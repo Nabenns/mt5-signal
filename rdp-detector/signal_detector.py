@@ -365,7 +365,15 @@ def detect_deals():
         digits = get_digits(deal.symbol)
 
         if deal.entry == mt5.DEAL_ENTRY_IN:
-            # Posisi baru dibuka
+            # Cek: apakah posisi ini berasal dari order LIMIT yang SUDAH diumumkan?
+            # Kalau ya → SKIP (jangan kirim OPEN/duplikat). Limit-nya udah di-signal duluan.
+            order_ticket = str(getattr(deal, "order", 0) or 0)
+            signaled = _state.get("signaled_orders", {})
+            if order_ticket != "0" and (order_ticket in _state.get("seen_orders", {}) or order_ticket in signaled):
+                log(f"⏭️ SKIP OPEN {sym}: posisi dari order LIMIT {order_ticket} yang udah di-signal")
+                continue
+
+            # Posisi baru dibuka (market order / bukan dari limit yang udah di-signal)
             typ = "BUY" if deal.type == mt5.DEAL_TYPE_BUY else "SELL"
             payload = {
                 "action": "OPEN",
@@ -505,6 +513,8 @@ def detect_orders():
         }
         res = send_signal(payload)
         log(f"📤 {typ} LIMIT {sym} @ {order.price_open} (SL={order.sl or 'auto'}) → {res}")
+        # Simpan permanen di signaled_orders: biar OPEN dari limit yang ke-hit gak dobel
+        _state.setdefault("signaled_orders", {})[ticket] = now
 
     # Bersihin seen untuk order yang udah gak ada
     for key in list(seen.keys()):
@@ -597,7 +607,7 @@ def main():
             else:
                 log("ℹ️ Keeping old state")
     
-    _state = {"seen_deals": {}, "pos_state": {}, "seen_orders": {}, "vps_fail_streak": 0}
+    _state = {"seen_deals": {}, "pos_state": {}, "seen_orders": {}, "signaled_orders": {}, "vps_fail_streak": 0}
     save_state()
 
     log("=" * 60)
