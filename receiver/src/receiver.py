@@ -25,7 +25,10 @@ from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # receiver/ (parent of src/)
+# BASE adaptif: support dua layout — repo (receiver/src/receiver.py → BASE=receiver/)
+# dan prod flat (/root/mt5-signal/receiver.py → BASE=dir file).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.dirname(_HERE) if os.path.basename(_HERE) == "src" else _HERE  # receiver/
 
 # ---- config ----
 ENV = {}
