@@ -1,37 +1,35 @@
 # MT5 Signal Relay
 
-Sistem relay sinyal trading dari **MetaTrader 5 → VPS Receiver → Telegram** (via selfbot user account), dengan dashboard live di Big Guy Management System.
+Sistem relay sinyal trading dari **MetaTrader 5 → VPS Receiver → Telegram** (via selfbot user account), dengan dashboard live di Big Guy Management System. Full Python — no EA.
 
 ## Arsitektur
 
 ```
-┌─────────────┐   WebRequest    ┌──────────────────┐   sb_queue.json   ┌───────────┐
-│ MT5 EA      │ ──────────────► │ VPS Receiver      │ ────────────────► │ Selfbot   │
-│ SignalRelay │  POST /signal   │ receiver.py       │                   │ selfbot.py│
-│ (EA di MT5) │  + X-Signal-Secret │ HTTP 127.0.0.1:3203 │                │ (Telethon)│
-└─────────────┘                └──────────────────┘                   └─────┬─────┘
+┌──────────────────┐  POST /api/signal  ┌────────────────────┐  sb_queue.json  ┌───────────┐
+│ MT5 Detector     │ ─────────────────► │ VPS Receiver       │ ──────────────► │ Selfbot   │
+│ signal_detector  │  + X-Signal-Secret │ receiver.py        │                 │ selfbot.py│
+│ (Python, di RDP) │                    │ HTTP 127.0.0.1:3203│                 │ (Telethon)│
+└──────────────────┘                    └────────────────────┘                 └─────┬─────┘
                                      │                                     │
                                      │ GET /api/health, /api/positions     ▼
                                      └──────────────► Big Guy MS      Telegram channel
                                                       /signal-monitor (SSE)
 ```
 
-- **MT5 EA** (`mt5/ea/SignalRelay.mq5`) — deteksi posisi buka/tutup, kirim OPEN/CLOSE/SLTP/LIMIT
+- **Signal detector** (`receiver/src/signal_detector.py`) — jalan di RDP Windows, baca trade dari terminal MT5 langsung via library `MetaTrader5`: polling deals/positions/pending orders tiap 1 detik, kirim OPEN/CLOSE/SLTP/LIMIT/NOTICE. Watchdog + auto re-login + health check + remote config.
 - **Receiver** (`receiver/src/receiver.py`) — terima sinyal, kelola lock/anti-duplikat, tulis `sb_queue.json`
 - **Selfbot** (`receiver/src/selfbot.py`) — baca queue, kirim pesan ke Telegram via akun user (Telethon)
-- **Signal detector** (`receiver/src/signal_detector.py`) — opsi tambahan deteksi order via terminal MT5 (RDP)
 - **Big Guy MS** — stream SSE ke `/signal-monitor/`
 
 ## Struktur
 
 ```
-mt5/ea/SignalRelay.mq5          EA utama (copy ke MT5 -> Experts)
 receiver/
   src/receiver.py               HTTP server receiver (PORT 3203)
   src/selfbot.py                Pengirim Telegram (Telethon)
-  src/signal_detector.py        Detector order MT5 (optional, via terminal)
-  config/detector_config.example.json   Config detector (copy -> detector_config.json)
-  config/config.example.json    Config sinyal (optional)
+  src/signal_detector.py        Detector sinyal MT5 (Python, jalan di RDP)
+  config/detector_config.example.json   Config detector (copy -> detector_config.json di VPS)
+  config/config.example.json    Config detector RDP (copy -> config.json sebelah script)
   scripts/install_task.bat      Install scheduled task Windows (auto-start)
   scripts/run.bat               Jalankan receiver (foreground)
   README.md                     Panduan setup receiver
@@ -39,13 +37,13 @@ receiver/
 
 ## Setup Cepat
 
-### 1. MT5 EA
-1. Copy `mt5/ea/SignalRelay.mq5` ke folder **MQL5/Experts** terminal MT5
-2. Buka MT5 → **Tools → Options → Expert Advisors** → centang **Allow WebRequest for listed URL**
-3. Tambahkan URL receiver (mis. `https://vps-anda.com`) ke list whitelist
-4. Attach EA ke chart. Set input:
-   - `InpReceiverURL` → `https://vps-anda.com/api/signal`
-   - `InpReceiverSecret` → secret yang sama dengan `.env` receiver
+### 1. Signal Detector (di RDP Windows)
+1. Install dependencies: `pip install MetaTrader5 requests`
+2. Copy `receiver/config/config.example.json` → `config.json` (sebelah script), isi:
+   - `mt5.login` / `mt5.password` / `mt5.server` → akun MT5
+   - `receiver_url` → `https://hirmes.bensserver.cloud/api/signal`
+   - `secret` → sama dengan `RECEIVER_SECRET` di `.env` receiver
+3. Jalankan: `python signal_detector.py` (manual) atau `install_task.bat` (auto-start saat logon RDP)
 
 ### 2. Receiver (di VPS)
 ```bash
@@ -56,8 +54,7 @@ cat > .env << 'EOF'
 RECEIVER_SECRET=isi-secret-kamu
 PORT=3203
 EOF
-pip install -r requirements.txt   # tidak ada dep eksternal — stdlib murni
-python src/receiver.py
+python src/receiver.py   # stdlib murni, tidak ada dep eksternal
 ```
 
 ### 3. Selfbot (di VPS / tempat lain)
@@ -75,7 +72,7 @@ Big Guy MS `/signal-monitor/` men-stream dari receiver via `/api/health` + SSE.
 
 | Endpoint | Method | Deskripsi |
 |---|---|---|
-| `/api/signal` | POST | Terima sinyal EA (X-Signal-Secret) |
+| `/api/signal` | POST | Terima sinyal dari detector (X-Signal-Secret) |
 | `/api/health` | GET | Status, statistik queue/lock |
 | `/api/positions` | GET | Daftar posisi aktif |
 | `/api/logs` | GET | Log terakhir |
@@ -96,4 +93,3 @@ Actions: `OPEN`, `CLOSE`, `SLTP`, `LIMIT`, `NOTICE`.
 ## Panduan Lengkap
 
 - Setup RDP / receiver / detector: `receiver/README.md`
-- Konfigurasi EA: input parameters di bagian atas `SignalRelay.mq5`

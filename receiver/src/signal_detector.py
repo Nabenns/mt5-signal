@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-MT5 Signal Detector v2 — FULL PYTHON pengganti EA
-====================================================
-Jalan di RDP Windows. Gantikan SignalRelay.mq5 total (EA gausah dipasang).
+MT5 Signal Detector v2 — FULL PYTHON
+=====================================
+Jalan di RDP Windows. Baca trade dari terminal MT5 langsung via library MetaTrader5.
 
 Fitur:
 1. 🔄 Watchdog    — terminal MT5 mati/ke-close → auto launch lagi + auto re-login
 2. 🔑 Auto-login  — via MetaTrader5.initialize(login, password, server)
 3. 📡 Detector    — poll deals & positions tiap 1 detik (delay ±1 detik)
 4. ❤️ Health      — cek berkala: terminal, koneksi broker, tick freshness, VPS
-5. 📤 Sender      — POST sinyal ke receiver VPS (format SAMA persis dengan EA)
+5. 📤 Sender      — POST sinyal ke receiver VPS (plain JSON over HTTPS)
 6. 🌐 Config API  — pull config from VPS every 30s, auto-apply changes
 
 Setup di RDP:
@@ -190,7 +190,7 @@ def mt5_connect():
 
 
 # ============================================================
-# SENDER (POST ke VPS receiver — format sama dengan EA)
+# SENDER (POST ke VPS receiver)
 # ============================================================
 def send_signal(payload):
     """POST ke VPS receiver dengan retry."""
@@ -611,7 +611,7 @@ def main():
     save_state()
 
     log("=" * 60)
-    log("🚀 MT5 Signal Detector v2 (FULL PYTHON, no EA) started")
+    log("🚀 MT5 Signal Detector v2 (FULL PYTHON) started")
     log(f"   Receiver: {CONFIG['receiver_url']}")
     log(f"   Poll: {CONFIG['settings'].get('poll_interval', 1.0)}s | Health: {CONFIG['settings'].get('health_interval', 60)}s")
     log("=" * 60)

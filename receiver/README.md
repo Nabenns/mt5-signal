@@ -2,14 +2,14 @@
 
 ## 🎯 What This Is
 
-**Full Python replacement for the EA-based solution.**  
-No EA needed — just run this script on your RDP and you're good.
+**Full Python signal detector.**
+Just run this script on your RDP and you're good.
 
 ### Features
 - ✅ **Auto-login** via API (`mt5.initialize()`)
 - ✅ **Watchdog**: if MT5 terminal closes → auto-relaunch + re-login
 - ✅ **Health checker**: monitors connection, tick freshness, VPS status
-- ✅ **Signal relay**: sends OPEN/SLTP/CLOSE to your VPS receiver (same format as EA)
+- ✅ **Signal relay**: sends OPEN/SLTP/CLOSE to your VPS receiver (plain JSON over HTTPS)
 - ✅ **System notices**: e.g., "MT5 restarted", "VPS down" sent to Telegram
 - ✅ **Deduplication**: avoids double-sending same deal/position
 
@@ -64,7 +64,7 @@ schtasks /query /tn "MT5 Signal Detector"
 ## 🔍 How It Works
 
 1. **Detects new trades** by polling `history_deals_get()` every 1 second.
-2. **Sends signals** to your VPS receiver (format: same as EA) → selfbot → Telegram.
+2. **Sends signals** to your VPS receiver → selfbot → Telegram.
 3. **Monitors health** (terminal, broker ping, ticks, VPS reachability).
 4. **Auto-recovers** if MT5 crashes/restarts.
 5. **Sends system notices** to Telegram (e.g., "watchdog restarted MT5").
@@ -110,17 +110,7 @@ pip install MetaTrader5 requests
 - `health.json` – latest health snapshot (readable JSON)
 - Telegram channel – receives trade signals + system notices
 
-## 🔄 Migration from EA
-
-If you're currently using `SignalRelay.mq5` on RDP:
-
-1. Install dependencies: `pip install MetaTrader5 requests`
-2. Copy `config.example.json` → `config.json`, fill credentials
-3. Remove `SignalRelay.mq5` from MT5 (no longer needed!)
-4. Run `install_task.bat` (or `python signal_detector.py`)
-5. Done! The Python script replaces the EA entirely.
-
 ---
 
 **GitHub Repo:** https://github.com/Nabenns/mt5-signal  
-**Receiver/VPS:** hirmes.bensserver.cloud (same backend as EA version)
+**Receiver/VPS:** hirmes.bensserver.cloud

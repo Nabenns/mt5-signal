@@ -12,7 +12,7 @@ Rules (final, per user):
 6. Lock per symbol: posisi A aktif -> entry B di symbol sama di-suppress.
 7. CLOSE -> lock lepas + buang pending.
 
-Actions dari EA: OPEN, SLTP, CLOSE, NOTICE.
+Actions dari detector: OPEN, SLTP, CLOSE, NOTICE.
 Output: sb_queue.json (dikonsumsi selfbot.py).
 """
 
@@ -314,7 +314,7 @@ def on_open(st, d):
     sl = float(d.get("sl") or 0)
     tp = float(d.get("tp") or 0)
 
-    # Entry udah bawa SL/TP (EA udah nunggu lengkap/grace) -> kirim sekarang juga
+    # Entry udah bawa SL/TP (detector udah nunggu lengkap/grace) -> kirim sekarang juga
     if sl > 0 or tp > 0:
         send_complete(st, d)
         return {"status": "sent"}

@@ -6,7 +6,7 @@
     "terminal_path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
   },
   "receiver_url": "https://hirmes.bensserver.cloud/api/signal",
-  "secret": "***ganti_dengan_secret_lo___dari_.env___RECEIVER_SECRET***",
+  "secret": "ganti_dengan_RECEIVER_SECRET_dari_.env_VPS",
   "settings": {
     "poll_interval": 1.0,
     "health_interval": 60,
