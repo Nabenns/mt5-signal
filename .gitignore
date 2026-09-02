@@ -9,3 +9,5 @@ detector_config.json
 config.json
 .venv/
 venv/
+telegram_config.json
+selfbot_health.json

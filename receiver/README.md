@@ -110,6 +110,57 @@ pip install MetaTrader5 requests
 - `health.json` – latest health snapshot (readable JSON)
 - Telegram channel – receives trade signals + system notices
 
+## 👥 Multi Akun & Multi Channel (Telegram)
+
+Selfbot v11 + receiver mendukung **banyak akun Telegram** dan **banyak channel tujuan** — semua dikelola lewat `telegram_config.json` di VPS (sebelah `receiver.py`), tanpa restart service.
+
+### Struktur config
+
+```json
+{
+  "accounts": [
+    {"name": "akun-utama",  "session": "6285196827787", "api_id": 123, "api_hash": "...", "enabled": true, "default": true},
+    {"name": "akun-cadangan", "session": "tg_akun_cadangan", "api_id": 123, "api_hash": "...", "enabled": false}
+  ],
+  "routes": [
+    {"name": "prod",  "chat_id": -1001816822545, "enabled": true},
+    {"name": "grup-vip", "chat_id": -1001234567890, "account": "akun-cadangan", "enabled": false},
+    {"name": "test",  "chat_id": -1004479253024, "test": true, "enabled": true}
+  ]
+}
+```
+
+- **accounts** — tiap akun = satu session Telethon (`login.py` yang bikin). `default: true` = akun pengirim utama.
+- **routes** — channel tujuan. Route `test: true` cuma kepakai kalau sinyal bawa flag `test` (proteksi nyasar tetap berlaku). `account` = pin akun pengirim (opsional). Sinyal non-test di-**fanout ke semua route non-test** yang enabled.
+- Tanpa config file → perilaku lama (1 akun legacy, PROD/TEST hardcode).
+
+### Kelola via API (tanpa SSH)
+
+```bash
+# Baca (password/api_hash di-mask)
+curl -H "X-Signal-Secret: $SECRET" "https://hirmes.bensserver.cloud/api/config/telegram?mask=1"
+
+# Update (replace accounts/routes, divalidasi: nama unik, pin akun harus ada)
+curl -X POST -H "X-Signal-Secret: $SECRET" -H "Content-Type: application/json" \
+  -d '{"routes":[...]}' "https://hirmes.bensserver.cloud/api/config/telegram"
+
+# Cek version/checksum (buat polling)
+curl "https://hirmes.bensserver.cloud/api/config/telegram/checksum"
+```
+
+Selfbot hot-reload dalam ≤5 detik setelah file berubah (akun baru konek, akun dihapus disconnect). Status akun live: `selfbot_health.json`.
+
+### Login akun baru
+
+```bash
+python3 login.py                # lihat status semua akun
+python3 login.py akun-baru +6281234567890   # buat akun baru (OTP via terminal)
+```
+
+### Failover
+
+Kalau akut pengirim kena FloodWait (atau error), selfbot otomatis coba akun enabled berikutnya (urutan: pin route → akun default → sisanya). Item gagal tetap di queue dan dicoba lagi di flush berikutnya.
+
 ---
 
 **GitHub Repo:** https://github.com/Nabenns/mt5-signal  

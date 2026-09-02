@@ -146,26 +146,95 @@ def save_sb_queue(q):
 
 
 # ---- queue builders ----
-# Channel tujuan: payload "test": true → channel TEST, selain itu → channel PROD.
-# Selfbot punya konstanta TG_CHAT_ID (prod) & TG_TEST_CHAT_ID; di sini cuma
-# nerusin flag chat_id supaya selfbot yang mutusin channel-nya.
-TEST_CHAT_ID = -1004479253024  # test channel (channel lama)
+# Channel tujuan sekarang data-driven dari telegram_config.json (multi akun + multi channel).
+# Flag "test": true → WAJIB ke route test. Tanpa config → fallback PROD/TEST lama.
+TEST_CHAT_ID = -1004479253024   # test channel (channel lama, fallback)
+TELEGRAM_CONFIG_FILE = os.path.join(BASE, "telegram_config.json")
+
+DEFAULT_TELEGRAM_CONFIG = {"accounts": [], "routes": []}
 
 
-def resolve_chat(sig, default_chat=None):
-    """Kalau payload bilang test → WAJIB kirim ke test channel, gak bisa lain.
+def load_telegram_config():
+    try:
+        with open(TELEGRAM_CONFIG_FILE) as f:
+            cfg = json.load(f)
+        if not isinstance(cfg, dict):
+            return json.loads(json.dumps(DEFAULT_TELEGRAM_CONFIG))
+        return cfg
+    except (OSError, ValueError):
+        return json.loads(json.dumps(DEFAULT_TELEGRAM_CONFIG))
 
-    Proteksi berlapis: flag test=true memaksa channel TEST.
-    Payload dari detector (tanpa flag test) → default_chat / PROD.
+
+def save_telegram_config(cfg):
+    cfg.setdefault("meta", {})
+    cfg["meta"]["version"] = int(cfg["meta"].get("version", 0)) + 1
+    cfg["meta"]["updated_at"] = time.time()
+    payload = json.dumps({"accounts": cfg.get("accounts", []), "routes": cfg.get("routes", [])}, sort_keys=True)
+    cfg["meta"]["checksum"] = hashlib.sha256(payload.encode()).hexdigest()[:16]
+    tmp = TELEGRAM_CONFIG_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, indent=2)
+    os.replace(tmp, TELEGRAM_CONFIG_FILE)
+    return cfg
+
+
+def route_targets(sig):
+    """Pilih daftar route tujuan untuk satu sinyal (hasil: list dict route).
+
+    Rules:
+    1. sig.test == True → cuma route yang bertanda test (proteksi nyasar).
+    2. Selain itu → semua route non-test yang enabled (FANOUT multi channel).
+    3. Config kosong/route tidak match → fallback perilaku lama
+       (prod = selfbot default, test = TEST_CHAT_ID).
+    Tiap route: {name, chat_id?, account?, test?}. chat_id kosong →
+    selfbot pakai channel PROD default-nya.
     """
+    cfg = load_telegram_config()
+    routes = [r for r in cfg.get("routes", []) if isinstance(r, dict) and r.get("enabled", True)]
     if sig.get("test"):
-        return TEST_CHAT_ID
-    return default_chat
+        pool = [r for r in routes if r.get("test")]
+        if not pool:
+            pool = [{"name": "test", "chat_id": TEST_CHAT_ID}]
+    else:
+        pool = [r for r in routes if not r.get("test")]
+        if not pool:
+            pool = [{"name": "prod"}]
+    return pool
+
+
+def _apply_route(item, route):
+    """Tempel chat_id/account/route ke satu item queue."""
+    cid = route.get("chat_id")
+    if cid:
+        try:
+            item["chat_id"] = int(cid)
+        except (TypeError, ValueError):
+            pass
+    acc = route.get("account")
+    if acc:
+        item["account"] = str(acc)
+    item["route"] = str(route.get("name") or ("test" if route.get("test") else "prod"))
+
+
+def _enqueue_fanout(base_item, sig, desc):
+    """Fanout satu sinyal ke semua route tujuan (multi channel).
+
+    1 sinyal → N item queue (satu per route). Tiap item bawa route name +
+    chat_id (kalau ada) + account pin (kalau ada) — selfbot yang eksekusi.
+    """
+    q = load_sb_queue()
+    names = []
+    for route in route_targets(sig or {}):
+        item = dict(base_item)
+        _apply_route(item, route)
+        q.append(item)
+        names.append(item["route"])
+    save_sb_queue(q)
+    log(f"📤 ENQUEUE {desc} → {len(names)} route: {', '.join(names)}")
 
 
 def enqueue_entry(sig):
-    q = load_sb_queue()
-    item = {
+    base = {
         "type": "ENTRY",
         "symbol": sig.get("symbol"),
         "type_": sig.get("type"),
@@ -178,36 +247,22 @@ def enqueue_entry(sig):
         "test": bool(sig.get("test")),
         "ts": time.time(),
     }
-    chat = resolve_chat(sig)
-    if chat:
-        item["chat_id"] = chat
-    q.append(item)
-    save_sb_queue(q)
-    target = "TEST" if chat else "PROD"
-    log(f"📤 ENQUEUE ENTRY: {sig.get('type')} {sig.get('symbol')} @ {sig.get('price')} → {target}")
+    _enqueue_fanout(base, sig, f"ENTRY: {sig.get('type')} {sig.get('symbol')} @ {sig.get('price')}")
 
 
 def enqueue_notice(text, sig=None):
     """Send system notice to Telegram (non-trade alert)."""
-    q = load_sb_queue()
-    item = {
+    base = {
         "type": "NOTICE",
         "text": text,
         "test": bool((sig or {}).get("test")),
         "ts": time.time(),
     }
-    chat = resolve_chat(sig or {})
-    if chat:
-        item["chat_id"] = chat
-    q.append(item)
-    save_sb_queue(q)
-    target = "TEST" if chat else "PROD"
-    log(f"📤 NOTIFICATION: {text[:50]} → {target}")
+    _enqueue_fanout(base, sig or {}, f"NOTIFICATION: {text[:50]}")
 
 
 def enqueue_sltp(sig, delay):
-    q = load_sb_queue()
-    item = {
+    base = {
         "type": "SLTP",
         "symbol": sig.get("symbol"),
         "sl": sig.get("sl"),
@@ -218,13 +273,7 @@ def enqueue_sltp(sig, delay):
         "ts": time.time(),
         "send_after": time.time() + delay,
     }
-    chat = resolve_chat(sig)
-    if chat:
-        item["chat_id"] = chat
-    q.append(item)
-    save_sb_queue(q)
-    target = "TEST" if chat else "PROD"
-    log(f"📤 ENQUEUE SLTP: {sig.get('symbol')} SL={sig.get('sl')} TP={sig.get('tp')} (+{delay}s) → {target}")
+    _enqueue_fanout(base, sig, f"SLTP: {sig.get('symbol')} SL={sig.get('sl')} TP={sig.get('tp')} (+{delay}s)")
 
 
 def enqueue_limit(sig):
@@ -248,8 +297,7 @@ def enqueue_limit(sig):
     except (TypeError, ValueError):
         area_range, sl_distance = 2.0, 5.0
 
-    q = load_sb_queue()
-    item = {
+    base = {
         "type": "LIMIT",
         "symbol": sig.get("symbol"),
         "type_": sig.get("type"),
@@ -264,14 +312,8 @@ def enqueue_limit(sig):
         "sl_distance": sl_distance,
         "ts": time.time(),
     }
-    chat = resolve_chat(sig)
-    if chat:
-        item["chat_id"] = chat
-    q.append(item)
-    save_sb_queue(q)
-    target = "TEST" if chat else "PROD"
-    log(f"📤 ENQUEUE LIMIT: {sig.get('type')} LIMIT {sig.get('symbol')} @ {sig.get('price')} "
-        f"(area ±{area_range}, SL fallback {sl_distance}) → {target}")
+    _enqueue_fanout(base, sig, f"LIMIT: {sig.get('type')} LIMIT {sig.get('symbol')} @ {sig.get('price')} "
+                              f"(area ±{area_range}, SL fallback {sl_distance})")
 
 
 def send_complete(st, sig):
@@ -538,7 +580,32 @@ class Handler(BaseHTTPRequestHandler):
                 "version": cfg.get("meta", {}).get("version", 0),
                 "checksum": cfg.get("meta", {}).get("checksum", ""),
             }, cors=True)
-        
+
+        # ---- Telegram config (read) ----
+        elif path == "/api/config/telegram":
+            # Auth required — config mengandung api_hash & nama file session
+            secret = self.headers.get("X-Signal-Secret") or self.headers.get("Authorization", "").replace("Bearer ", "")
+            if not secret:
+                qs = parse_qs(parsed.query)
+                secret = qs.get("secret", [None])[0]
+            if secret != SECRET:
+                return self._json(401, {"error": "unauthorized"}, cors=True)
+            qs = parse_qs(parsed.query)
+            cfg = load_telegram_config()
+            if qs.get("mask", ["0"])[0] == "1":
+                cfg = json.loads(json.dumps(cfg))
+                for acc in cfg.get("accounts", []):
+                    ah = str(acc.get("api_hash", ""))
+                    if ah:
+                        acc["api_hash"] = "•" * 8 + ah[-4:]
+            self._json(200, cfg, cors=True)
+        elif path == "/api/config/telegram/checksum":
+            # Lightweight endpoint buat selfbot hot-reload
+            cfg = load_telegram_config()
+            self._json(200, {
+                "version": cfg.get("meta", {}).get("version", 0),
+                "checksum": cfg.get("meta", {}).get("checksum", ""),
+            }, cors=True)
         else:
             self._json(404, {"error": "not found"}, cors=True)
 
@@ -643,6 +710,58 @@ class Handler(BaseHTTPRequestHandler):
                 "checksum": cfg["meta"]["checksum"]
             }, cors=True)
         
+        # ---- Telegram config (write) ----
+        elif path == "/api/config/telegram":
+            secret = self.headers.get("X-Signal-Secret") or self.headers.get("Authorization", "").replace("Bearer ", "")
+            if not secret:
+                qs = parse_qs(parsed.query)
+                secret = qs.get("secret", [None])[0]
+            if secret != SECRET:
+                return self._json(401, {"error": "unauthorized"}, cors=True)
+
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            try:
+                req = json.loads(body)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                return self._json(400, {"error": "Invalid JSON"}, cors=True)
+
+            with _lock:
+                cfg = load_telegram_config()
+                if "accounts" in req:
+                    cfg["accounts"] = req["accounts"]
+                if "routes" in req:
+                    cfg["routes"] = req["routes"]
+
+                # Validasi basic
+                names = set()
+                for acc in cfg.get("accounts", []):
+                    if not isinstance(acc, dict) or not acc.get("name"):
+                        return self._json(400, {"error": "account butuh field 'name'"}, cors=True)
+                    if acc["name"] in names:
+                        return self._json(400, {"error": f"account duplikat: {acc['name']}"}, cors=True)
+                    names.add(acc["name"])
+                rnames = set()
+                for r in cfg.get("routes", []):
+                    if not isinstance(r, dict) or not (r.get("name") or r.get("test")):
+                        return self._json(400, {"error": "route butuh field 'name'"}, cors=True)
+                    nm = r.get("name") or ("test" if r.get("test") else "prod")
+                    if nm in rnames:
+                        return self._json(400, {"error": f"route duplikat: {nm}"}, cors=True)
+                    rnames.add(nm)
+                    pin = r.get("account")
+                    if pin and pin not in names:
+                        return self._json(400, {"error": f"route '{nm}' pin akun '{pin}' yang tidak ada"}, cors=True)
+
+                cfg = save_telegram_config(cfg)
+
+            log(f"✅ TELEGRAM CONFIG UPDATED (v{cfg['meta']['version']}) — from {self.client_address[0]}")
+            return self._json(200, {
+                "status": "updated",
+                "version": cfg["meta"]["version"],
+                "checksum": cfg["meta"]["checksum"]
+            }, cors=True)
+
         if path not in ("/signal", "/api/signal"):
             return self._json(404, {"error": "not found"})
 
@@ -694,7 +813,7 @@ class Handler(BaseHTTPRequestHandler):
             elif action == "LIMIT":
                 res = on_limit(st, d)
             elif action == "NOTICE":
-                enqueue_notice(d.get("text", ""))
+                enqueue_notice(d.get("text", ""), d)  # oper payload → flag test ikut
                 res = {"status": "sent"}
             else:
                 res = {"status": "skipped", "reason": f"action_{action}"}

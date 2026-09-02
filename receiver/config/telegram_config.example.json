@@ -1,0 +1,42 @@
+{
+  "accounts": [
+    {
+      "name": "akun-utama",
+      "session": "6285196827787",
+      "api_id": 38274094,
+      "api_hash": "API_HASH_AKUN_INI",
+      "enabled": true,
+      "default": true
+    },
+    {
+      "name": "akun-cadangan",
+      "session": "tg_akun_cadangan",
+      "api_id": 38274094,
+      "api_hash": "API_HASH_AKUN_INI",
+      "enabled": false
+    }
+  ],
+  "routes": [
+    {
+      "name": "prod",
+      "chat_id": -1001816822545,
+      "enabled": true
+    },
+    {
+      "name": "grup-vip",
+      "chat_id": -1001234567890,
+      "account": "akun-cadangan",
+      "enabled": false
+    },
+    {
+      "name": "test",
+      "chat_id": -1004479253024,
+      "test": true,
+      "enabled": true
+    }
+  ],
+  "meta": {
+    "version": 0,
+    "updated_at": 0
+  }
+}
