@@ -21,6 +21,7 @@ Queue item types:
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import random
@@ -503,9 +504,13 @@ async def flush_once(accounts):
         if send_after and time.time() < send_after:
             continue
 
-        # Dedup INCLUDE route — kalau tidak, fanout item ke-2 langsung kebuang
+        # Dedup INCLUDE route — kalau tidak, fanout item ke-2 langsung kebuang.
+        # NOTICE gak punya deal/position → tambah hash teks biar notice beda
+        # gak saling makan dalam jendela dedup.
         route = sig.get("route") or ("test" if sig.get("test") else "prod")
         key = f"{sig.get('type')}:{sig.get('deal') or sig.get('position')}:{route}"
+        if sig.get("type") == "NOTICE":
+            key += ":" + hashlib.md5(str(sig.get("text", "")).encode()).hexdigest()[:8]
         async with _seen_lock:
             if len(_seen) > 2000:
                 _seen.clear()
