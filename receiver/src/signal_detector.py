@@ -43,14 +43,15 @@ HEALTH_FILE = os.path.join(BASE, "health.json")
 # Multi akun MT5: 1 script, banyak instance. Tiap instance punya config sendiri:
 #   python signal_detector.py                     → config.json   (default/publik)
 #   python signal_detector.py --config config_vip.json → akun VIP
-# State/log/health ikut dipisah biar 2 instance gak tabrakan.
+# State/log/health/checksum ikut dipisah biar 2 instance gak tabrakan.
+_CFG_STEM = ""
 _args = sys.argv[1:]
 if "--config" in _args:
     CONFIG_FILE = os.path.abspath(_args[_args.index("--config") + 1])
-    _stem = os.path.splitext(os.path.basename(CONFIG_FILE))[0]
-    STATE_FILE = os.path.join(BASE, f"detector_state_{_stem}.json")
-    LOG_FILE = os.path.join(BASE, f"detector_{_stem}.log")
-    HEALTH_FILE = os.path.join(BASE, f"health_{_stem}.json")
+    _CFG_STEM = os.path.splitext(os.path.basename(CONFIG_FILE))[0]
+    STATE_FILE = os.path.join(BASE, f"detector_state_{_CFG_STEM}.json")
+    LOG_FILE = os.path.join(BASE, f"detector_{_CFG_STEM}.log")
+    HEALTH_FILE = os.path.join(BASE, f"health_{_CFG_STEM}.json")
 
 WIB = timezone(timedelta(hours=7))
 
@@ -250,7 +251,8 @@ def send_notice(text):
 # ---- Config management from remote API ----
 def pull_remote_config():
     """Pull config dari /api/config/detector/checksum → compare & apply if changed."""
-    checksums_file = os.path.join(BASE, "config_checksums.json")
+    # Per instance: 2 detector gak boleh berebut satu file checksum
+    checksums_file = os.path.join(BASE, f"config_checksums{_CFG_STEM}.json")
     
     # Load last known checksum
     last_checksum = ""
