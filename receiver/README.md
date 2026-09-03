@@ -161,6 +161,34 @@ python3 login.py akun-baru +6281234567890   # buat akun baru (OTP via terminal)
 
 Kalau akut pengirim kena FloodWait (atau error), selfbot otomatis coba akun enabled berikutnya (urutan: pin route → akun default → sisanya). Item gagal tetap di queue dan dicoba lagi di flush berikutnya.
 
+## 🔌 Multi Akun MT5 (2 detector, 2 channel)
+
+Satu script, banyak instance — tiap akun MT5 satu config. Contoh setup 2 akun:
+
+| Instance | Config | Source | Route tujuan |
+|----------|--------|--------|--------------|
+| Akun A (publik) | `config.json` | `""` (public) | route `prod` |
+| Akun B (VIP) | `config_vip.json` | `"vip"` | route ber-`source: "vip"` |
+
+### RDP Windows
+
+1. Copy `config.example.json` → `config_vip.json`. Isi kredensial MT5 akun B + **`"source": "vip"`**.
+2. Jalankan: `python signal_detector.py --config config_vip.json` (atau double-click `scripts/run_vip.bat`).
+3. Tiap instance punya state/log/health sendiri (`detector_state_vip.json`, `detector_vip.log`, `health_vip.json`) — gak tabrakan.
+4. Remote config juga terpisah: instance VIP poll `?source=vip` → file `detector_config_vip.json` di VPS (edit via API yang sama dengan `?source=vip`).
+
+### Receiver (otomatis)
+
+- Sinyal bawa `source` → route dengan `source` yang sama di `telegram_config.json` (route tanpa field `source` = publik).
+- **Lock per source**: posisi XAUUSD di akun publik gak nge-suppress XAUUSD di akun VIP (dan sebaliknya).
+- **Anti-bocor**: sinyal `source: "vip"` tanpa route vip → **dibuang** dengan log jelas, BUKAN diterusin ke channel publik.
+- Flag `test: true` tetap override ke channel TEST apapun source-nya.
+- Route baru buat VIP (contoh):
+  ```json
+  {"name": "vip", "chat_id": -100XXXXXXXXXX, "source": "vip", "enabled": true}
+  ```
+  Set via API `POST /api/config/telegram` (selfbot hot-reload ≤5s).
+
 ---
 
 **GitHub Repo:** https://github.com/Nabenns/mt5-signal  

@@ -7,6 +7,7 @@
   },
   "receiver_url": "https://hirmes.bensserver.cloud/api/signal",
   "secret": "ganti_dengan_RECEIVER_SECRET_dari_.env_VPS",
+  "source": "",
   "settings": {
     "poll_interval": 1.0,
     "health_interval": 60,

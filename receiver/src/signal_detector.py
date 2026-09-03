@@ -40,6 +40,18 @@ STATE_FILE = os.path.join(BASE, "detector_state.json")
 LOG_FILE = os.path.join(BASE, "detector.log")
 HEALTH_FILE = os.path.join(BASE, "health.json")
 
+# Multi akun MT5: 1 script, banyak instance. Tiap instance punya config sendiri:
+#   python signal_detector.py                     → config.json   (default/publik)
+#   python signal_detector.py --config config_vip.json → akun VIP
+# State/log/health ikut dipisah biar 2 instance gak tabrakan.
+_args = sys.argv[1:]
+if "--config" in _args:
+    CONFIG_FILE = os.path.abspath(_args[_args.index("--config") + 1])
+    _stem = os.path.splitext(os.path.basename(CONFIG_FILE))[0]
+    STATE_FILE = os.path.join(BASE, f"detector_state_{_stem}.json")
+    LOG_FILE = os.path.join(BASE, f"detector_{_stem}.log")
+    HEALTH_FILE = os.path.join(BASE, f"health_{_stem}.json")
+
 WIB = timezone(timedelta(hours=7))
 
 
@@ -51,7 +63,12 @@ def get_remote_config_url():
         base = base[:-11]  # Remove "/api/signal"
     elif base.endswith("/api/signal/"):
         base = base[:-12]  # Remove "/api/signal/"
-    return base + "/api/config/detector"
+    url = base + "/api/config/detector"
+    # Instance non-default (config_vip dkk.) poll file config-nya sendiri
+    src = str(CONFIG.get("source") or "").strip().lower()
+    if src and src != "public":
+        url += f"?source={src}"
+    return url
 
 
 # CONFIG
@@ -85,6 +102,11 @@ def load_config():
     # Set defaults
     CONFIG.setdefault("settings", {})
     CONFIG.setdefault("mt5", {})
+    # Identitas instance buat multi akun: source sinyal ("" = public)
+    CONFIG["source"] = str(CONFIG.get("source") or "").strip().lower()
+    globals()["_local_source_backup"] = {"source": CONFIG["source"]}
+    if CONFIG["source"]:
+        log(f"🎯 Instance source: '{CONFIG['source']}' (sinyal → route source ini)")
 
 
 # ============================================================
@@ -193,9 +215,10 @@ def mt5_connect():
 # SENDER (POST ke VPS receiver)
 # ============================================================
 def send_signal(payload):
-    """POST ke VPS receiver dengan retry."""
+    """POST ke VPS receiver dengan retry. Source selalu ditempel (routing per akun)."""
     url = CONFIG["receiver_url"]
     headers = {"X-Signal-Secret": CONFIG["secret"], "Content-Type": "application/json"}
+    payload.setdefault("source", str(CONFIG.get("source") or "").strip().lower())
 
     for attempt in range(3):
         try:
@@ -264,7 +287,12 @@ def pull_remote_config():
                     cfg = r.json()
                     CONFIG["mt5"] = cfg["mt5"]
                     CONFIG["settings"] = cfg["settings"]
-                    
+                    # Jaga field identitas instance: source & receiver_url gak boleh
+                    # ketimpa remote (file config per akun, remote dipakai bareng).
+                    if "source" in _local_source_backup:
+                        CONFIG["source"] = _local_source_backup["source"]
+                    CONFIG.setdefault("source", _local_source_backup.get("source", ""))
+
                     save_local_config(cfg)
                     save_checksums(cur_version, cur_checksum)
                     
@@ -299,8 +327,17 @@ def pull_remote_config():
 
 
 def save_local_config(cfg):
+    # Jangan pernah nulis field identitas instance dari remote ke file lokal
+    cfg = {k: v for k, v in cfg.items() if k not in ("source", "receiver_url", "secret")}
+    cur = {}
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            cur = json.load(f)
+    except (OSError, ValueError):
+        pass
+    cur.update(cfg)
     with open(CONFIG_FILE, "w") as f:
-        json.dump(cfg, f, indent=2)
+        json.dump(cur, f, indent=2)
     log("✅ Local config saved")
 
 
@@ -611,8 +648,9 @@ def main():
     save_state()
 
     log("=" * 60)
-    log("🚀 MT5 Signal Detector v2 (FULL PYTHON) started")
+    log("🚀 MT5 Signal Detector v3 (FULL PYTHON, multi akun) started")
     log(f"   Receiver: {CONFIG['receiver_url']}")
+    log(f"   Config: {os.path.basename(CONFIG_FILE)} | Source: '{CONFIG.get('source') or 'public'}'")
     log(f"   Poll: {CONFIG['settings'].get('poll_interval', 1.0)}s | Health: {CONFIG['settings'].get('health_interval', 60)}s")
     log("=" * 60)
 

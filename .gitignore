@@ -6,6 +6,8 @@ sb_queue.json
 state.json
 *.log
 detector_config.json
+detector_config_*.json
+config_*.json
 config.json
 .venv/
 venv/

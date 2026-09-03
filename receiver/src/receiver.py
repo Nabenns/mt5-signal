@@ -56,6 +56,26 @@ _seen_events = {}
 
 
 # ---- detector config (remote-managed, source of truth di VPS) ----
+# Multi akun MT5: tiap detektor punya config sendiri, dipilih via ?source=
+# di API (detektor VIP poll ?source=vip → file detector_config_vip.json).
+DEFAULT_DETECTOR_SOURCE = "public"
+
+
+def _detector_cfg_file(source=None):
+    s = str(source or "").strip().lower()
+    if not s or s == DEFAULT_DETECTOR_SOURCE:
+        return DETECTOR_CONFIG_FILE
+    return os.path.join(BASE, f"detector_config_{s}.json")
+
+
+def load_detector_config(source=None):
+    try:
+        with open(_detector_cfg_file(source)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return json.loads(json.dumps(DEFAULT_DETECTOR_CONFIG))
+
+
 DEFAULT_DETECTOR_CONFIG = {
     "mt5": {
         "login": 0,
@@ -76,24 +96,18 @@ DEFAULT_DETECTOR_CONFIG = {
 }
 
 
-def load_detector_config():
-    try:
-        with open(DETECTOR_CONFIG_FILE) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return json.loads(json.dumps(DEFAULT_DETECTOR_CONFIG))
-
-
-def save_detector_config(cfg):
-    cfg["meta"]["version"] = int(cfg.get("meta", {}).get("version", 0)) + 1
+def save_detector_config(cfg, source=None):
+    cfg["meta"] = cfg.get("meta", {})
+    cfg["meta"]["version"] = int(cfg["meta"].get("version", 0)) + 1
     cfg["meta"]["updated_at"] = time.time()
     # checksum dari isi (tanpa meta) biar detector bisa detect perubahan
     payload = json.dumps({"mt5": cfg["mt5"], "settings": cfg["settings"]}, sort_keys=True)
     cfg["meta"]["checksum"] = hashlib.sha256(payload.encode()).hexdigest()[:16]
-    tmp = DETECTOR_CONFIG_FILE + ".tmp"
+    path = _detector_cfg_file(source)
+    tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(cfg, f, indent=2)
-    os.replace(tmp, DETECTOR_CONFIG_FILE)
+    os.replace(tmp, path)
     return cfg
 
 
@@ -121,9 +135,27 @@ def log(msg):
 def load_state():
     try:
         with open(STATE_FILE) as f:
-            return json.load(f)
+            st = json.load(f)
     except (OSError, ValueError):
         return {"active": {}, "pending": {}}
+    # Migrasi state lama (key "SYMBOL") → per-source ("source|SYMBOL").
+    # Entry tanpa prefix = sinyal dari detektor default → 'public'.
+    old = st.get("active", {})
+    new = {}
+    for k, v in old.items():
+        if "|" in k:
+            v.setdefault("source", k.split("|", 1)[0])
+            new[k] = v
+        else:
+            v["source"] = "public"
+            new[f"public|{k}"] = v
+    st["active"] = new
+    return st
+
+
+def _active_key(sig):
+    """Key lock per source: 'vip|XAUUSD'. Akun beda gak saling blokir."""
+    return f"{_norm_source(sig)}|{sig.get('symbol')}"
 
 
 def save_state(st):
@@ -181,27 +213,39 @@ def save_telegram_config(cfg):
     return cfg
 
 
+def _norm_source(sig):
+    """Normalisasi source sinyal: '' / tanpa field → 'public'."""
+    s = str((sig or {}).get("source") or "").strip().lower()
+    return s or "public"
+
+
 def route_targets(sig):
     """Pilih daftar route tujuan untuk satu sinyal (hasil: list dict route).
 
     Rules:
-    1. sig.test == True → cuma route yang bertanda test (proteksi nyasar).
-    2. Selain itu → semua route non-test yang enabled (FANOUT multi channel).
-    3. Config kosong/route tidak match → fallback perilaku lama
-       (prod = selfbot default, test = TEST_CHAT_ID).
-    Tiap route: {name, chat_id?, account?, test?}. chat_id kosong →
-    selfbot pakai channel PROD default-nya.
+    1. sig.test == True → cuma route yang bertanda test (proteksi nyasar,
+       berlaku apapun source-nya — test mode aman buat semua akun).
+    2. Selain itu → semua route non-test yang enabled dengan source yang sama
+       dengan sinyal (route tanpa field 'source' = 'public').
+       Multi akun MT5: detektor A (source public) → route publik,
+       detektor B (source vip) → route VIP. FANOUT dalam source tetap jalan.
+    3. Source 'public' tanpa match → fallback perilaku lama (prod default).
+       Source lain tanpa match → KOSONG (sinyal dibuang, BUKAN ke publik —
+       anti-bocor; selfbot log jelas).
+    Tiap route: {name, chat_id?, account?, source?, test?}.
     """
     cfg = load_telegram_config()
     routes = [r for r in cfg.get("routes", []) if isinstance(r, dict) and r.get("enabled", True)]
+    src = _norm_source(sig)
     if sig.get("test"):
         pool = [r for r in routes if r.get("test")]
         if not pool:
             pool = [{"name": "test", "chat_id": TEST_CHAT_ID}]
-    else:
-        pool = [r for r in routes if not r.get("test")]
-        if not pool:
-            pool = [{"name": "prod"}]
+        return pool
+    pool = [r for r in routes if not r.get("test")
+            and str(r.get("source") or "public").strip().lower() == src]
+    if not pool and src == "public":
+        pool = [{"name": "prod"}]
     return pool
 
 
@@ -220,14 +264,20 @@ def _apply_route(item, route):
 
 
 def _enqueue_fanout(base_item, sig, desc):
-    """Fanout satu sinyal ke semua route tujuan (multi channel).
+    """Fanout satu sinyal ke semua route tujuan (multi channel, per source).
 
     1 sinyal → N item queue (satu per route). Tiap item bawa route name +
     chat_id (kalau ada) + account pin (kalau ada) — selfbot yang eksekusi.
+    Pool kosong (source tanpa route) → sinyal DIBUANG dengan log jelas.
     """
+    targets = route_targets(sig or {})
+    if not targets:
+        log(f"🚫 DROP {desc} — gak ada route enabled untuk source "
+            f"'{_norm_source(sig)}' (dibuang, bukan diterusin ke publik)")
+        return
     q = load_sb_queue()
     names = []
-    for route in route_targets(sig or {}):
+    for route in targets:
         item = dict(base_item)
         _apply_route(item, route)
         q.append(item)
@@ -324,10 +374,11 @@ def send_complete(st, sig):
     enqueue_entry(sig)
     if float(sig.get("sl") or 0) > 0 or float(sig.get("tp") or 0) > 0:
         enqueue_sltp(sig, SLTP_GAP_SECONDS)
-    st["active"][sig["symbol"]] = {
+    st["active"][_active_key(sig)] = {
         "position": sig.get("position"),
         "ts": time.time(),
         "price": sig.get("price"),
+        "source": _norm_source(sig),
     }
     log(f"✅ SENT COMPLETE: {sig.get('type')} {sig.get('symbol')} SL={sig.get('sl')} TP={sig.get('tp')}")
 
@@ -335,10 +386,11 @@ def send_complete(st, sig):
 def send_entry_only(st, sig):
     """Kirim entry doang (fallback saat grace habis tanpa SL/TP lengkap)."""
     enqueue_entry(sig)
-    st["active"][sig["symbol"]] = {
+    st["active"][_active_key(sig)] = {
         "position": sig.get("position"),
         "ts": time.time(),
         "price": sig.get("price"),
+        "source": _norm_source(sig),
     }
     log(f"⌛ SENT ENTRY-ONLY (grace expired): {sig.get('type')} {sig.get('symbol')}")
 
@@ -350,10 +402,13 @@ def on_open(st, d):
     deal = d.get("deal") or 0
     now = time.time()
 
-    # Lock check: masih ada posisi aktif di symbol ini?
-    act = st["active"].get(symbol)
+    # Lock check PER SOURCE: posisi aktif di symbol ini dari AKUN YANG SAMA?
+    # Akun lain (source beda) di symbol sama tetep boleh kirim.
+    akey = _active_key(d)
+    act = st["active"].get(akey)
     if act and (now - act.get("ts", 0)) < STALE_LOCK_SECONDS:
-        log(f"🚫 SUPPRESS {symbol}: posisi {act.get('position')} masih aktif")
+        log(f"🚫 SUPPRESS {akey}: posisi {act.get('position')} masih aktif "
+            f"(source {_norm_source(d)})")
         return {"status": "suppressed", "reason": "position_active"}
 
     sl = float(d.get("sl") or 0)
@@ -366,13 +421,14 @@ def on_open(st, d):
 
     # BELUM LENGKAP -> KIRIM ENTRY SEKARANG JUGA, SL/TP nyusul terpisah
     enqueue_entry(d)
-    st["active"][symbol] = {
+    st["active"][akey] = {
         "position": position,
         "ts": now,
         "price": d.get("price"),
+        "source": _norm_source(d),
         "waiting_sltp": True,  # marker: masih nunggu SL/TP
     }
-    log(f"📤 ENTRY sent immediately: {d.get('type')} {symbol} @ {d.get('price')} (SLTP pending)")
+    log(f"📤 ENTRY sent immediately: {d.get('type')} {akey} @ {d.get('price')} (SLTP pending)")
     return {"status": "sent", "sltp_pending": True}
 
 
@@ -408,8 +464,9 @@ def on_sltp(st, d):
         send_complete(st, pend)
         return {"status": "sent", "merged": True}
 
-    # TIDAK ADA PENDING -> cari ACTIVE lock dengan position yang sama
-    act = st["active"].get(symbol)
+    # TIDAK ADA PENDING -> cari ACTIVE lock dengan source + position yang sama
+    akey = _active_key(d)
+    act = st["active"].get(akey)
     if act and act.get("position") == position:
         if sl == 0 and tp == 0:
             return {"status": "ignored", "reason": "sltp_zero"}
@@ -422,6 +479,7 @@ def on_sltp(st, d):
             "digits": d.get("digits", 2),
             "position": position,
             "deal": deal,
+            "source": d.get("source"),  # ikut routing per source
         }
         enqueue_sltp(sig, 0)  # kirim langsung, tanpa delay
         # Clear waiting marker
@@ -438,12 +496,14 @@ def on_close(st, d):
     symbol = d.get("symbol")
     position = d.get("position") or 0
 
-    act = st["active"].get(symbol)
+    # Lock per source: cuma lepasin lock milik akun yang nge-close
+    akey = _active_key(d)
+    act = st["active"].get(akey)
     if act and act.get("position") == position:
-        del st["active"][symbol]
-        log(f"🔓 CLOSE {symbol} pos {position} — lock dilepas")
+        del st["active"][akey]
+        log(f"🔓 CLOSE {akey} pos {position} — lock dilepas")
     elif act:
-        log(f"ℹ️ CLOSE {symbol} pos {position} (lock aktif posisi {act.get('position')})")
+        log(f"ℹ️ CLOSE {akey} pos {position} (lock aktif posisi {act.get('position')})")
 
     # Buang pending untuk posisi ini (close sebelum SL/TP lengkap)
     for key in list(st["pending"].keys()):
@@ -540,8 +600,13 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 st = load_state()
             positions = []
-            for symbol, info in st.get("active", {}).items():
+            for akey, info in st.get("active", {}).items():
+                if "|" in akey:
+                    src, symbol = akey.split("|", 1)
+                else:
+                    src, symbol = "public", akey
                 positions.append({
+                    "source": src,
                     "symbol": symbol,
                     "position_id": info.get("position"),
                     "price": info.get("price"),
@@ -568,8 +633,10 @@ class Handler(BaseHTTPRequestHandler):
             if secret != SECRET:
                 return self._json(401, {"error": "unauthorized"}, cors=True)
             # ?mask=1 → password di-mask (buat display di FE)
+            # ?source=vip → config detektor VIP (file terpisah per akun)
             qs = parse_qs(parsed.query)
-            cfg = load_detector_config()
+            source = (qs.get("source", [""])[0] or "").strip().lower()
+            cfg = load_detector_config(source)
             if qs.get("mask", ["0"])[0] == "1":
                 cfg = json.loads(json.dumps(cfg))
                 pw = cfg["mt5"].get("password", "")
@@ -578,7 +645,9 @@ class Handler(BaseHTTPRequestHandler):
         
         elif path == "/api/config/detector/checksum":
             # Lightweight endpoint buat detector poll perubahan (no auth body leak)
-            cfg = load_detector_config()
+            qs = parse_qs(parsed.query)
+            source = (qs.get("source", [""])[0] or "").strip().lower()
+            cfg = load_detector_config(source)
             self._json(200, {
                 "version": cfg.get("meta", {}).get("version", 0),
                 "checksum": cfg.get("meta", {}).get("checksum", ""),
@@ -690,9 +759,11 @@ class Handler(BaseHTTPRequestHandler):
                 req = json.loads(body)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 return self._json(400, {"error": "Invalid JSON"}, cors=True)
-            
+
+            qs = parse_qs(parsed.query)
+            source = (qs.get("source", [""])[0] or "").strip().lower()
             with _lock:
-                cfg = load_detector_config()
+                cfg = load_detector_config(source)
                 # Merge hanya mt5 dan settings
                 if "mt5" in req:
                     cfg["mt5"] = deep_merge(cfg["mt5"], req["mt5"])
@@ -704,9 +775,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not cfg["mt5"].get("password") or cfg["mt5"]["password"] == "***":
                     return self._json(400, {"error": "missing/invalid mt5.password"}, cors=True)
                 
-                cfg = save_detector_config(cfg)
+                cfg = save_detector_config(cfg, source)
             
-            log(f"✅ DETECTOR CONFIG UPDATED (v{cfg['meta']['version']}) — from {self.client_address[0]}")
+            label = f" [{source}]" if source and source != DEFAULT_DETECTOR_SOURCE else ""
+            log(f"✅ DETECTOR CONFIG{label} UPDATED (v{cfg['meta']['version']}) — from {self.client_address[0]}")
             return self._json(200, {
                 "status": "updated",
                 "version": cfg["meta"]["version"],
@@ -783,16 +855,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": "bad json"})
 
         action = (d.get("action") or "").upper()
+        src = _norm_source(d)
 
-        # dedup per event
+        # dedup per event (source ikut — ticket akun beda bisa kebetulan sama)
         if action == "OPEN":
-            dedup_key = ("OPEN", d.get("deal"), d.get("position"))
+            dedup_key = ("OPEN", src, d.get("deal"), d.get("position"))
         elif action == "SLTP":
-            dedup_key = ("SLTP", d.get("symbol"), d.get("position"), d.get("sl"), d.get("tp"))
+            dedup_key = ("SLTP", src, d.get("symbol"), d.get("position"), d.get("sl"), d.get("tp"))
         elif action == "CLOSE":
-            dedup_key = ("CLOSE", d.get("position") or d.get("deal"))
+            dedup_key = ("CLOSE", src, d.get("position") or d.get("deal"))
         elif action == "LIMIT":
-            dedup_key = ("LIMIT", d.get("deal") or d.get("position"))
+            dedup_key = ("LIMIT", src, d.get("deal") or d.get("position"))
         else:
             dedup_key = None
 
