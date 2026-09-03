@@ -303,6 +303,10 @@ def pull_remote_config():
                     if str(cfg.get("mt5", {}).get("password") or "") in ("***", "") \
                             and CONFIG.get("mt5", {}).get("password"):
                         cfg["mt5"]["password"] = CONFIG["mt5"]["password"]
+                    # Field lokal yang gak dikelola remote: portable wajib selamat
+                    # (kalau ilang, 2 terminal MT5 bareng langsung rusak setelah pull pertama)
+                    if CONFIG.get("mt5", {}).get("portable") and "portable" not in cfg.get("mt5", {}):
+                        cfg["mt5"]["portable"] = True
                     CONFIG["mt5"] = cfg["mt5"]
                     CONFIG["settings"] = cfg["settings"]
                     # Jaga field identitas instance: source & receiver_url gak boleh
