@@ -170,6 +170,10 @@ def mt5_connect():
         "password": CONFIG["mt5"]["password"],
         "server": CONFIG["mt5"]["server"],
     }
+    # portable=True → data di folder terminal sendiri; WAJIB buat 2 MT5 bareng
+    # (2 akun beda) biar gak berebut data folder di AppData.
+    if CONFIG["mt5"].get("portable"):
+        creds["portable"] = True
 
     # Attempt loop (terminal kadang butuh waktu buat boot)
     for attempt in range(1, 4):
@@ -287,6 +291,11 @@ def pull_remote_config():
                 r = requests.get(full_url + "?mask=1", params={"secret": CONFIG["secret"]}, timeout=10)
                 if r.status_code == 200:
                     cfg = r.json()
+                    # Mask-safe: jangan timpa password lokal dengan "***" dari remote
+                    # (file remote bisa ke-mask; watchdog butuh password asli buat re-login)
+                    if str(cfg.get("mt5", {}).get("password") or "") in ("***", "") \
+                            and CONFIG.get("mt5", {}).get("password"):
+                        cfg["mt5"]["password"] = CONFIG["mt5"]["password"]
                     CONFIG["mt5"] = cfg["mt5"]
                     CONFIG["settings"] = cfg["settings"]
                     # Jaga field identitas instance: source & receiver_url gak boleh
