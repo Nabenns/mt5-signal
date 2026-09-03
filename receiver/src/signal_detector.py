@@ -19,12 +19,19 @@ Setup di RDP:
    (atau dobel-klik run.bat / install sebagai scheduled task via install_task.bat)
 """
 
+import io
 import json
 import os
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone, timedelta
+
+# Windows console (SSH/scheduled task) default cp1252 → emoji di print bakal crash.
+# Paksa UTF-8 buat stdout/stderr.
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 try:
     import MetaTrader5 as mt5
