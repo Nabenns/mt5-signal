@@ -516,6 +516,7 @@ async def flush_once(accounts):
                 _seen.clear()
             now = time.time()
             if key in _seen and now - _seen[key] < 300:
+                log(f"🗑️ SKIP dup {key} (sudah terkirim <5m)")
                 q.remove(sig)
                 save_queue(q)
                 continue
