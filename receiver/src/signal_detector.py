@@ -112,6 +112,8 @@ def load_config():
     CONFIG.setdefault("mt5", {})
     # Identitas instance buat multi akun: source sinyal ("" = public)
     CONFIG["source"] = str(CONFIG.get("source") or "").strip().lower()
+    # Mode test per instance: "test": true → semua sinyal instance ini ke channel test
+    CONFIG["test"] = bool(CONFIG.get("test"))
     globals()["_local_source_backup"] = {"source": CONFIG["source"]}
     if CONFIG["source"]:
         log(f"🎯 Instance source: '{CONFIG['source']}' (sinyal → route source ini)")
@@ -231,6 +233,8 @@ def send_signal(payload):
     url = CONFIG["receiver_url"]
     headers = {"X-Signal-Secret": CONFIG["secret"], "Content-Type": "application/json"}
     payload.setdefault("source", str(CONFIG.get("source") or "").strip().lower())
+    if CONFIG.get("test"):
+        payload.setdefault("test", True)  # instance test mode → semua sinyal ke channel test
 
     for attempt in range(3):
         try:
