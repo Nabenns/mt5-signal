@@ -675,18 +675,16 @@ _started_at = time.time()
 def main():
     load_config()
     
-    # Auto-detect dirty state file and warn if exists from long ago
+    # State lama (>2 jam) → auto hapus, mulai fresh.
+    # (Dulu prompt input y/n — background/SSH/scheduled task gak punya stdin
+    #  → EOFError crash pas startup; kejadian nyata di RDP. Isi state toh
+    #  di-reset fresh tepat setelah blok ini, jadi prompt-nya percuma.)
     if os.path.exists(STATE_FILE):
         stat = os.stat(STATE_FILE)
         age_hours = (time.time() - stat.st_mtime) / 3600
-        if age_hours > 2:  # lebih dari 2 jam
-            log(f"⚠️ Old state file detected ({age_hours:.1f}h ago)")
-            choice = input("Delete old state? (y/n): ")
-            if choice.lower() == 'y':
-                os.remove(STATE_FILE)
-                log("✅ State deleted")
-            else:
-                log("ℹ️ Keeping old state")
+        if age_hours > 2:
+            os.remove(STATE_FILE)
+            log(f"♻️ State lama ({age_hours:.1f}h) dihapus — mulai fresh")
     
     _state = {"seen_deals": {}, "pos_state": {}, "seen_orders": {}, "signaled_orders": {}, "vps_fail_streak": 0}
     save_state()

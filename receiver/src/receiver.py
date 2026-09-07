@@ -702,29 +702,42 @@ class Handler(BaseHTTPRequestHandler):
                 secret = qs.get("secret", [None])[0]
             if secret != SECRET:
                 return self._json(401, {"error": "unauthorized"}, cors=True)
-            
+
             # Check client IP and log for audit trail
             client_ip = self.client_address[0]
-            
+
+            # force=true dari query ATAU body JSON — dulu dijanjikan di pesan
+            # error tapi GAK PERNAH dibaca (reset selalu blocked kalau ada posisi)
+            qs = parse_qs(parsed.query)
+            force = (qs.get("force", [""])[0] or "").strip().lower() in ("1", "true", "yes")
+            try:
+                _len = int(self.headers.get("Content-Length", 0))
+                if _len:
+                    _body = json.loads(self.rfile.read(_len).decode('utf-8'))
+                    if isinstance(_body, dict) and _body.get("force"):
+                        force = True
+            except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+                pass
+
             with _lock:
                 st = load_state()
-                
+
                 # SAFETY CHECK: Don't allow reset if active positions exist
                 active_count = len(st.get("active", {}))
                 pending_count = len(st.get("pending", {}))
-                
-                if active_count > 0:
+
+                if active_count > 0 and not force:
                     return self._json(
-                        400, 
+                        400,
                         {
-                            "error": "reset_blocked", 
+                            "error": "reset_blocked",
                             "reason": f"Cannot reset: {active_count} active position(s) detected. Close all positions first or use force=true parameter.",
                             "active_positions": list(st["active"].keys()),
                             "pending_orders": pending_count
                         },
                         cors=True
                     )
-                
+
                 # Safe to reset - only pending orders remain
                 save_state({"active": {}, "pending": {}})
                 save_sb_queue([])
