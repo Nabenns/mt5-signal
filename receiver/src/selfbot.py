@@ -50,7 +50,11 @@ LEGACY_SESSION = os.path.join(BASE, "6285196827787")  # telethon append .session
 LEGACY_API_ID = 38274094
 LEGACY_API_HASH = "c57671be8ccbd29f37dd82c97a28370e"
 TG_CHAT_ID = -1001816822545       # Production channel: MT5 Signal Relay (New)
-TG_TEST_CHAT_ID = -1004479253024  # test channel (channel lama)
+TEST_CHAT_ID = -1004479253024   # test channel (channel lama, fallback)
+
+# Disclaimer "masih testing" — ditempel di akhir SETIAP pesan (ENTRY/SLTP/
+# LIMIT/NOTICE) selama masa trial. Set "" buat matiin pas mau live beneran.
+TESTING_DISCLAIMER = "\n\n⚠️ MASIH TAHAP TESTING — sinyal dari akun demo, bukan sinyal live. Gunakan aturan risk management masing-masing."
 
 CONFIG_POLL_SECONDS = 5
 FLOOD_CAP_SECONDS = 6 * 3600
@@ -198,7 +202,7 @@ def resolve_chat(account, sig):
     if cid:
         return int(cid)
     if sig.get("test"):
-        return TG_TEST_CHAT_ID
+        return TEST_CHAT_ID
     return TG_CHAT_ID
 
 
@@ -309,6 +313,7 @@ async def send_entry(account, sig):
         f"TP 3 : \u2049\ufe0f\n\n"
         f"JAGA RISK KALIAN GUYS \u203c\ufe0f"
     )
+    text += TESTING_DISCLAIMER
 
     entities = []
     if emoji_id:
@@ -343,6 +348,7 @@ async def send_sltp(account, sig):
         return
 
     text = " | ".join(parts)
+    text += TESTING_DISCLAIMER
 
     # Bold semua harga (SL & TP)
     entities = []
@@ -431,6 +437,7 @@ async def send_limit(account, sig):
         f"TP 3 : \u2049\ufe0f\n\n"
         f"JAGA RISK KALIAN GUYS \u203c\ufe0f"
     )
+    text += TESTING_DISCLAIMER
 
     # Custom emoji BUY/SELL di posisi awal (2 char) — sama seperti send_entry
     entities = []
@@ -534,7 +541,7 @@ async def flush_once(accounts):
                 text = s.get("text", "")
                 if text:
                     chat = resolve_chat(acc, s)
-                    await acc.send(chat, text, [])
+                    await acc.send(chat, text + TESTING_DISCLAIMER, [])
                     log(f"✅ SENT NOTICE: {text[:80]} → chat {chat} via {acc.name}")
         else:
             async def sender(acc, s):
