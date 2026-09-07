@@ -299,12 +299,16 @@ def pull_remote_config():
                 
                 # Pull full config
                 full_url = get_remote_config_url()
-                r = requests.get(full_url + "?mask=1", params={"secret": CONFIG["secret"]}, timeout=10)
+                # Tanpa mask: detector butuh password asli buat re-login
+                # (dulu ?mask=1 dikirim, password balik dalam bentuk "••••" dan
+                #  nge-timpa password lokal asli → login gagal terus)
+                r = requests.get(full_url, params={"secret": CONFIG["secret"]}, timeout=10)
                 if r.status_code == 200:
                     cfg = r.json()
-                    # Mask-safe: jangan timpa password lokal dengan "***" dari remote
-                    # (file remote bisa ke-mask; watchdog butuh password asli buat re-login)
-                    if str(cfg.get("mt5", {}).get("password") or "") in ("***", "") \
+                    # Mask-safe: jangan timpa password lokal dengan mask dari remote
+                    # ("***" atau "••••…" — watchdog butuh password asli buat re-login)
+                    _pw = str(cfg.get("mt5", {}).get("password") or "")
+                    if (_pw in ("***", "") or _pw.startswith("•")) \
                             and CONFIG.get("mt5", {}).get("password"):
                         cfg["mt5"]["password"] = CONFIG["mt5"]["password"]
                     # Field lokal yang gak dikelola remote: portable wajib selamat
@@ -368,7 +372,9 @@ def save_local_config(cfg):
 
 
 def save_checksums(version, checksum):
-    with open(os.path.join(BASE, "config_checksums.json"), "w") as f:
+    # Per instance (ikut _CFG_STEM) — kalau satu file bareng, PUB & VIP
+    # saling nimpa checksum dan pull-nya jadi kacau.
+    with open(os.path.join(BASE, f"config_checksums{_CFG_STEM}.json"), "w") as f:
         json.dump({"version": version, "checksum": checksum}, f)
 
 
@@ -394,11 +400,23 @@ def get_digits(symbol):
 
 def broker_time_offset():
     """Selisih waktu server broker vs waktu lokal (detik).
-    PENTING: history_deals_get() pake waktu BROKER, bukan lokal!"""
+    PENTING: history_deals_get() pake waktu BROKER, bukan lokal!
+    Hanya pake tick yang FRESH (<60s): symbol market tutup (weekend, dll.)
+    ninggalin tick basi berjam-jam — kalau kepilih, window query deal
+    meleset ke masa lalu dan deal baru gak pernah ke-scan."""
+    for sym in ("XAUUSD", "#XAUUSD", "BTCUSD", "#BTCUSD", "EURUSD", "USDCHF"):
+        tick = mt5.symbol_info_tick(sym)
+        if tick and tick.time > 0 and (time.time() - tick.time) < 60:
+            return tick.time - time.time()
+    # Gak ada tick fresh sama sekali: fallback ke tick termuda yang ada
+    best = None
     for sym in ("XAUUSD", "#XAUUSD", "BTCUSD", "#BTCUSD", "EURUSD", "USDCHF"):
         tick = mt5.symbol_info_tick(sym)
         if tick and tick.time > 0:
-            return tick.time - time.time()
+            if best is None or tick.time > best[0]:
+                best = (tick.time, tick)
+    if best:
+        return best[0] - time.time()
     return 0
 
 
