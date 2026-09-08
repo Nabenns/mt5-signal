@@ -54,7 +54,7 @@ TEST_CHAT_ID = -1004479253024   # test channel (channel lama, fallback)
 
 # Disclaimer "masih testing" — ditempel di akhir SETIAP pesan (ENTRY/SLTP/
 # LIMIT/NOTICE) selama masa trial. Set "" buat matiin pas mau live beneran.
-TESTING_DISCLAIMER = "\n\n⚠️ MASIH TAHAP TESTING — sinyal dari akun demo, bukan sinyal live. Gunakan aturan risk management masing-masing."
+TESTING_DISCLAIMER = "\n\n⚠️ MASIH TAHAP TESTING — hasil & akurasi sinyal belum pasti. Selalu pakai risk management dan DOYK masing-masing."
 
 CONFIG_POLL_SECONDS = 5
 FLOOD_CAP_SECONDS = 6 * 3600
