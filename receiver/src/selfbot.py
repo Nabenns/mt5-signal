@@ -52,9 +52,6 @@ LEGACY_API_HASH = "c57671be8ccbd29f37dd82c97a28370e"
 TG_CHAT_ID = -1001816822545       # Production channel: MT5 Signal Relay (New)
 TEST_CHAT_ID = -1004479253024   # test channel (channel lama, fallback)
 
-# Disclaimer "masih testing" — ditempel di akhir SETIAP pesan (ENTRY/SLTP/
-# LIMIT/NOTICE) selama masa trial. Set "" buat matiin pas mau live beneran.
-TESTING_DISCLAIMER = "\n\n⚠️ MASIH TAHAP TESTING — hasil & akurasi sinyal belum pasti. Selalu pakai risk management dan DOYK masing-masing."
 
 CONFIG_POLL_SECONDS = 5
 FLOOD_CAP_SECONDS = 6 * 3600
@@ -212,6 +209,11 @@ def mark_flood(account, seconds):
         f"{datetime.fromtimestamp(account.flood_until, WIB).strftime('%H:%M:%S')}")
 
 
+def route_format(sig):
+    """Nama template format untuk item ini (dari route, default 'default')."""
+    return str(sig.get("format") or "default").strip().lower()
+
+
 # ------------------------------------------------------------- formatting ----
 def bulatin(price, digits):
     try:
@@ -275,6 +277,8 @@ def _pip_size(price, digits):
 
 
 async def send_entry(account, sig):
+    if route_format(sig) == "run50":
+        return await send_entry_run50(account, sig)
     sym = clean_sym(sig.get("symbol"))
     typ = str(sig.get("type_") or sig.get("type") or "BUY").upper()
     digits = int(sig.get("digits", 2))
@@ -310,10 +314,8 @@ async def send_entry(account, sig):
         f"SL : {fmt_harga(sl_price, digits)}\n\n"
         f"TP 1 : 60 PIPS\n"
         f"TP 2 : 120 PIPS\n"
-        f"TP 3 : \u2049\ufe0f\n\n"
-        f"JAGA RISK KALIAN GUYS \u203c\ufe0f"
+        f"TP 3 : \u2049\ufe0f"
     )
-    text += TESTING_DISCLAIMER
 
     entities = []
     if emoji_id:
@@ -333,6 +335,72 @@ async def send_entry(account, sig):
         f"→ chat {chat} via {account.name}")
 
 
+# Custom emoji ID dari pesan referensi format run50 (DM @kokomelonsss).
+RUN50_BUY_BADGE = 6150042827389670840    # badge BUY (hijau) — pengganti 🔤 pertama
+RUN50_SELL_BADGE = 6149714670413419541   # badge SELL (merah) — pengganti 🔤 pertama
+RUN50_EMOJI_2 = 6151933897195130910      # emoji 🔤 kedua
+RUN50_EXCL = 5440660757194744323         # ‼️ custom di baris penutup
+
+
+async def send_entry_run50(account, sig):
+    """Format run50: persis pesan referensi — badge 🔤🔤, TP 2 baris,
+    penutup 'RUN 50 PIPS SET BE, JAGA RISK MANAGEMENT ‼️' (‼️ custom emoji)."""
+    sym = clean_sym(sig.get("symbol"))
+    typ = str(sig.get("type_") or sig.get("type") or "BUY").upper()
+    digits = int(sig.get("digits", 2))
+    chat = resolve_chat(account, sig)
+
+    base = float(sig.get("price") or 0)
+    area_range = float(sig.get("area_range", 2))
+    sl_actual = float(sig.get("sl") or 0)
+    auto_sl = base + _pip_size(base, digits) * 60 if typ == "SELL" else base - _pip_size(base, digits) * 60
+    sl_price = sl_actual if sl_actual > 0 else auto_sl
+
+    if typ == "BUY":
+        price_high = fmt_harga(base, digits)
+        price_low = fmt_harga(base - area_range, digits)
+        header = f"| {price_high} - {price_low}"
+    elif typ == "SELL":
+        price_low = fmt_harga(base, digits)
+        price_high = fmt_harga(base + area_range, digits)
+        header = f"| {price_low} - {price_high}"
+    else:
+        header = f"| {fmt_harga(base, digits)}"
+
+    # Rangka teks: badge dirender via custom emoji; fallback unicode 🔤 kalau
+    # premium emoji gagal — tetap mirip referensi.
+    text = (
+        f"🔤🔤 {typ} NOW {sym} {header}\n"
+        f"SL : {fmt_harga(sl_price, digits)}\n\n"
+        f"TP 1 : 60 PIPS\n"
+        f"TP 2 : 120 PIPS\n\n"
+        f"RUN 50 PIPS SET BE, JAGA RISK MANAGEMENT ‼️"
+    )
+
+    entities = []
+    badge = RUN50_SELL_BADGE if typ == "SELL" else RUN50_BUY_BADGE if typ == "BUY" else None
+    if badge:
+        entities.append(MessageEntityCustomEmoji(offset=0, length=2, document_id=badge))
+        entities.append(MessageEntityCustomEmoji(offset=2, length=2, document_id=RUN50_EMOJI_2))
+
+    # Bold zona harga + nilai SL (persis posisi referensi)
+    hdr_start = text.find(header)
+    if hdr_start >= 0:
+        entities.append(MessageEntityBold(offset=hdr_start, length=len(header)))
+    sl_str = fmt_harga(sl_price, digits)
+    sl_start = text.find(f"SL : {sl_str}")
+    if sl_start >= 0:
+        entities.append(MessageEntityBold(offset=sl_start + 5, length=len(sl_str)))
+    tail = "RUN 50 PIPS SET BE, JAGA RISK MANAGEMENT"
+    tail_start = text.find(tail + " ‼️")
+    if tail_start >= 0:
+        entities.append(MessageEntityCustomEmoji(offset=tail_start + len(tail) + 1, length=2, document_id=RUN50_EXCL))
+
+    await account.send(chat, text, entities)
+    log(f"✅ SENT ENTRY run50 ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
+        f"→ chat {chat} via {account.name}")
+
+
 async def send_sltp(account, sig):
     sl = sig.get("sl") or 0
     tp = sig.get("tp") or 0
@@ -348,8 +416,6 @@ async def send_sltp(account, sig):
         return
 
     text = " | ".join(parts)
-    text += TESTING_DISCLAIMER
-
     # Bold semua harga (SL & TP)
     entities = []
     offset = 0
@@ -381,18 +447,7 @@ def _fmt_limit_price(v, digits):
 
 
 async def send_limit(account, sig):
-    """Kirim pesan pending order (BUY LIMIT / SELL LIMIT) format template user.
-
-    Contoh (BUY LIMIT @ 4477, area 4477-4474, SL 4471):
-        💰 BUY XAUUSD | 4477 - 4474
-        SL : 4471
-
-        TP 1 : 60 PIPS
-        TP 2 : 120 PIPS
-        TP 3 : ⁉️
-
-        JAGA RISK KALIAN GUYS ‼️
-    """
+    """Kirim pesan pending order (BUY LIMIT / SELL LIMIT)."""
     sym = clean_sym(sig.get("symbol"))
     typ = str(sig.get("type_") or sig.get("type") or "BUY").upper()
     digits = int(sig.get("digits", 2))
@@ -434,11 +489,8 @@ async def send_limit(account, sig):
         f"SL : {fmt_harga(sl_price, digits)}\n\n"
         f"TP 1 : 60 PIPS\n"
         f"TP 2 : 120 PIPS\n"
-        f"TP 3 : \u2049\ufe0f\n\n"
-        f"JAGA RISK KALIAN GUYS \u203c\ufe0f"
+        f"TP 3 : \u2049\ufe0f"
     )
-    text += TESTING_DISCLAIMER
-
     # Custom emoji BUY/SELL di posisi awal (2 char) — sama seperti send_entry
     entities = []
     entities.append(MessageEntityCustomEmoji(offset=0, length=2, document_id=emoji_id))
@@ -541,7 +593,7 @@ async def flush_once(accounts):
                 text = s.get("text", "")
                 if text:
                     chat = resolve_chat(acc, s)
-                    await acc.send(chat, text + TESTING_DISCLAIMER, [])
+                    await acc.send(chat, text, [])
                     log(f"✅ SENT NOTICE: {text[:80]} → chat {chat} via {acc.name}")
         else:
             async def sender(acc, s):

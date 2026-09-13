@@ -260,6 +260,9 @@ def _apply_route(item, route):
     acc = route.get("account")
     if acc:
         item["account"] = str(acc)
+    fmt = str(route.get("format") or "").strip()
+    if fmt:
+        item["format"] = fmt.lower()
     item["route"] = str(route.get("name") or ("test" if route.get("test") else "prod"))
 
 
@@ -330,18 +333,7 @@ def enqueue_sltp(sig, delay):
 
 
 def enqueue_limit(sig):
-    """Enqueue pesan pending order (BUY LIMIT / SELL LIMIT) ke Telegram.
-
-    Format pesan (template fixed, lihat selfbot.send_limit):
-        💰 BUY XAUUSD | 4477 - 4474
-        SL : 4471
-        (blank)
-        TP 1 : 60 PIPS
-        TP 2 : 120 PIPS
-        TP 3 : ⁉️
-        (blank)
-        JAGA RISK KALIAN GUYS ‼️
-    """
+    """Enqueue pesan pending order (BUY LIMIT / SELL LIMIT) ke Telegram."""
     # Baca area range & SL distance dari detector config (source of truth di VPS)
     try:
         dcfg = load_detector_config()
