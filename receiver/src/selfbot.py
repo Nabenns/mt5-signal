@@ -344,16 +344,19 @@ async def send_entry(account, sig):
         f"→ chat {chat} via {account.name}")
 
 
-# Custom emoji ID dari pesan referensi format run50 (DM @kokomelonsss).
-RUN50_BUY_BADGE = 6150042827389670840    # badge BUY (hijau) — pengganti 🔤 pertama
-RUN50_SELL_BADGE = 6149714670413419541   # badge SELL (merah) — pengganti 🔤 pertama
-RUN50_EMOJI_2 = 6151933897195130910      # emoji 🔤 kedua
+# Custom emoji run50: pakai doc yang terbukti render di semua client ini
+# (dipakai bot di VIP/prod sejak lama). Doc badge dari pesan referensi DM
+# (61500.../61497.../61519...) pack-nya gak accessible viewer → fallback teks.
+RUN50_BUY_BADGE = 5296596700704548349    # 💰 custom (sama dgn template default)
+RUN50_SELL_BADGE = 5294049355601292129   # 🔻 custom (sama dgn template default)
 RUN50_EXCL = 5440660757194744323         # ‼️ custom di baris penutup
 
 
 async def send_entry_run50(account, sig):
-    """Format run50: persis pesan referensi — badge 🔤🔤, TP 2 baris,
-    penutup 'RUN 50 PIPS SET BE, JAGA RISK MANAGEMENT ‼️' (‼️ custom emoji)."""
+    """Format run50: body pesan referensi (TP 2 baris + penutup RUN 50 PIPS
+    SET BE). Badge pakai doc custom yang terbukti render (💰/🔻, sama dgn
+    template default) — doc badge dari pesan referensi DM (61500.../61497...)
+    pack-nya gak accessible viewer → fallback jadi teks 'B abc'/'SE abc'."""
     sym = clean_sym(sig.get("symbol"))
     typ = str(sig.get("type_") or sig.get("type") or "BUY").upper()
     digits = int(sig.get("digits", 2))
@@ -364,6 +367,9 @@ async def send_entry_run50(account, sig):
     sl_actual = float(sig.get("sl") or 0)
     auto_sl = base + _pip_size(base, digits) * 60 if typ == "SELL" else base - _pip_size(base, digits) * 60
     sl_price = sl_actual if sl_actual > 0 else auto_sl
+
+    badge = RUN50_SELL_BADGE if typ == "SELL" else RUN50_BUY_BADGE if typ == "BUY" else None
+    badge_char = "\U0001F53D" if typ == "SELL" else "\U0001F4B0" if typ == "BUY" else "\U0001F4A0"
 
     if typ == "BUY":
         price_high = fmt_harga(base, digits)
@@ -376,22 +382,19 @@ async def send_entry_run50(account, sig):
     else:
         header = f"| {fmt_harga(base, digits)}"
 
-    # Rangka teks: badge dirender via custom emoji; fallback unicode 🔤 kalau
-    # premium emoji gagal — tetap mirip referensi.
+    # Badge 1 char via custom emoji (fallback unicode kalau viewer gak load).
     text = (
-        f"🔤🔤 {typ} NOW {sym} {header}\n"
+        f"{badge_char} {typ} NOW {sym} {header}\n"
         f"SL : {fmt_harga(sl_price, digits)}\n\n"
         f"TP 1 : 60 PIPS\n"
         f"TP 2 : 120 PIPS\n\n"
         f"RUN 50 PIPS SET BE, JAGA RISK MANAGEMENT ‼️"
     )
 
-    entities = []
-    badge = RUN50_SELL_BADGE if typ == "SELL" else RUN50_BUY_BADGE if typ == "BUY" else None
-    if badge:
-        entities.append(MessageEntityCustomEmoji(offset=0, length=2, document_id=badge))
-        entities.append(MessageEntityCustomEmoji(offset=_u16(text, 2), length=2, document_id=RUN50_EMOJI_2))
-    # Bold zona harga + nilai SL (posisi persis referensi) — offset UTF-16
+    entities = [
+        MessageEntityCustomEmoji(offset=0, length=1, document_id=badge),
+    ]
+    # Bold zona harga + nilai SL — offset UTF-16
     hdr_start = text.find(header)
     if hdr_start >= 0:
         entities.append(MessageEntityBold(offset=_u16(text, hdr_start),
