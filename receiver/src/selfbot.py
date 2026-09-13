@@ -392,7 +392,9 @@ async def send_entry_run50(account, sig):
     )
 
     entities = [
-        MessageEntityCustomEmoji(offset=0, length=1, document_id=badge),
+        # badge_char astral (💰/🔻) = 2 unit UTF-16 — length wajib 2, kalau 1
+        # entity-nya di-strip server (pernah: badge hilang dari pesan).
+        MessageEntityCustomEmoji(offset=0, length=2, document_id=badge),
     ]
     # Bold zona harga + nilai SL — offset UTF-16
     hdr_start = text.find(header)
