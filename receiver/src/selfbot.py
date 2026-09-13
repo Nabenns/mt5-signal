@@ -276,6 +276,13 @@ def _pip_size(price, digits):
     return 1.0 if price >= 1000 else 0.01
 
 
+def _u16(text, pos):
+    """Posisi UTF-16 (unit Telegram) dari index string Python.
+    Emoji astral (🔤💰🔻) = 1 char Python tapi 2 unit UTF-16 — entity
+    offset/length MTProto wajib unit UTF-16, kalau tidak bold geser."""
+    return len(text[:pos].encode("utf-16-le")) // 2
+
+
 async def send_entry(account, sig):
     if route_format(sig) == "run50":
         return await send_entry_run50(account, sig)
@@ -321,14 +328,16 @@ async def send_entry(account, sig):
     if emoji_id:
         entities.append(MessageEntityCustomEmoji(offset=0, length=2, document_id=emoji_id))
 
-    # Bold zone + SL
+    # Bold zone + SL — offset/length wajib unit UTF-16 (emoji 💰/🔻 astral)
     hdr_start = text.find(header)
     if hdr_start >= 0:
-        entities.append(MessageEntityBold(offset=hdr_start, length=len(header)))
+        entities.append(MessageEntityBold(offset=_u16(text, hdr_start),
+                                          length=_u16(text, hdr_start + len(header)) - _u16(text, hdr_start)))
     sl_str = fmt_harga(sl_price, digits)
     sl_start = text.find(f"SL : {sl_str}")
     if sl_start >= 0:
-        entities.append(MessageEntityBold(offset=sl_start + 5, length=len(sl_str)))
+        entities.append(MessageEntityBold(offset=_u16(text, sl_start + 5),
+                                          length=_u16(text, sl_start + 5 + len(sl_str)) - _u16(text, sl_start + 5)))
 
     await account.send(chat, text, entities)
     log(f"✅ SENT ENTRY ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
@@ -381,21 +390,22 @@ async def send_entry_run50(account, sig):
     badge = RUN50_SELL_BADGE if typ == "SELL" else RUN50_BUY_BADGE if typ == "BUY" else None
     if badge:
         entities.append(MessageEntityCustomEmoji(offset=0, length=2, document_id=badge))
-        entities.append(MessageEntityCustomEmoji(offset=2, length=2, document_id=RUN50_EMOJI_2))
-
-    # Bold zona harga + nilai SL (persis posisi referensi)
+        entities.append(MessageEntityCustomEmoji(offset=_u16(text, 2), length=2, document_id=RUN50_EMOJI_2))
+    # Bold zona harga + nilai SL (posisi persis referensi) — offset UTF-16
     hdr_start = text.find(header)
     if hdr_start >= 0:
-        entities.append(MessageEntityBold(offset=hdr_start, length=len(header)))
+        entities.append(MessageEntityBold(offset=_u16(text, hdr_start),
+                                          length=_u16(text, hdr_start + len(header)) - _u16(text, hdr_start)))
     sl_str = fmt_harga(sl_price, digits)
     sl_start = text.find(f"SL : {sl_str}")
     if sl_start >= 0:
-        entities.append(MessageEntityBold(offset=sl_start + 5, length=len(sl_str)))
+        entities.append(MessageEntityBold(offset=_u16(text, sl_start + 5),
+                                          length=_u16(text, sl_start + 5 + len(sl_str)) - _u16(text, sl_start + 5)))
     tail = "RUN 50 PIPS SET BE, JAGA RISK MANAGEMENT"
     tail_start = text.find(tail + " ‼️")
     if tail_start >= 0:
-        entities.append(MessageEntityCustomEmoji(offset=tail_start + len(tail) + 1, length=2, document_id=RUN50_EXCL))
-
+        entities.append(MessageEntityCustomEmoji(offset=_u16(text, tail_start + len(tail) + 1),
+                                                 length=2, document_id=RUN50_EXCL))
     await account.send(chat, text, entities)
     log(f"✅ SENT ENTRY run50 ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
         f"→ chat {chat} via {account.name}")
