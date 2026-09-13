@@ -286,6 +286,8 @@ def _u16(text, pos):
 async def send_entry(account, sig):
     if route_format(sig) == "run50":
         return await send_entry_run50(account, sig)
+    if route_format(sig) == "indi":
+        return await send_entry_indi(account, sig)
     sym = clean_sym(sig.get("symbol"))
     typ = str(sig.get("type_") or sig.get("type") or "BUY").upper()
     digits = int(sig.get("digits", 2))
@@ -413,6 +415,74 @@ async def send_entry_run50(account, sig):
                                                  length=2, document_id=RUN50_EXCL))
     await account.send(chat, text, entities)
     log(f"✅ SENT ENTRY run50 ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
+        f"→ chat {chat} via {account.name}")
+
+
+# Custom emoji format "indikatorisme" — dari pesan referensi DM @kokomelonsss
+# (msg 1815/1816): badge 📈 (BUY) / 📉 (SELL), penutup JANGAN LUPA ATUR... ‼️.
+INDI_BUY_BADGE = 5262747715552438702     # 📈 custom
+INDI_SELL_BADGE = 5262828387923158890    # 📉 custom
+INDI_EXCL = 5440660757194744323          # ‼️ custom (sama dgn run50)
+
+
+async def send_entry_indi(account, sig):
+    """Format 'indikatorisme': badge 📈/📉 1 emoji custom, TP tanpa nomor
+    (TP : 60 PIPS / TP : 120 PIPS), penutup 'JANGAN LUPA ATUR RISK
+    MANAGEMENT ‼️'. Zona harga + SL bold — offset UTF-16."""
+    sym = clean_sym(sig.get("symbol"))
+    typ = str(sig.get("type_") or sig.get("type") or "BUY").upper()
+    digits = int(sig.get("digits", 2))
+    chat = resolve_chat(account, sig)
+
+    base = float(sig.get("price") or 0)
+    area_range = float(sig.get("area_range", 2))
+    sl_actual = float(sig.get("sl") or 0)
+    auto_sl = base + _pip_size(base, digits) * 60 if typ == "SELL" else base - _pip_size(base, digits) * 60
+    sl_price = sl_actual if sl_actual > 0 else auto_sl
+
+    is_buy = typ != "SELL"
+    badge = INDI_BUY_BADGE if is_buy else INDI_SELL_BADGE
+    badge_char = "\U0001F4C8" if is_buy else "\U0001F4C9"
+
+    if typ == "BUY":
+        price_high = fmt_harga(base, digits)
+        price_low = fmt_harga(base - area_range, digits)
+        header = f"| {price_high} - {price_low}"
+    elif typ == "SELL":
+        price_low = fmt_harga(base, digits)
+        price_high = fmt_harga(base + area_range, digits)
+        header = f"| {price_low} - {price_high}"
+    else:
+        header = f"| {fmt_harga(base, digits)}"
+
+    text = (
+        f"{badge_char} {typ} NOW {sym} {header}\n"
+        f"SL : {fmt_harga(sl_price, digits)}\n\n"
+        f"TP : 60 PIPS\n"
+        f"TP : 120 PIPS\n\n"
+        f"JANGAN LUPA ATUR RISK MANAGEMENT ‼️"
+    )
+
+    entities = [
+        # 📈/📉 astral = 2 unit UTF-16 → length wajib 2
+        MessageEntityCustomEmoji(offset=0, length=2, document_id=badge),
+    ]
+    hdr_start = text.find(header)
+    if hdr_start >= 0:
+        entities.append(MessageEntityBold(offset=_u16(text, hdr_start),
+                                          length=_u16(text, hdr_start + len(header)) - _u16(text, hdr_start)))
+    sl_str = fmt_harga(sl_price, digits)
+    sl_start = text.find(f"SL : {sl_str}")
+    if sl_start >= 0:
+        entities.append(MessageEntityBold(offset=_u16(text, sl_start + 5),
+                                          length=_u16(text, sl_start + 5 + len(sl_str)) - _u16(text, sl_start + 5)))
+    tail = "JANGAN LUPA ATUR RISK MANAGEMENT"
+    tail_start = text.find(tail + " ‼️")
+    if tail_start >= 0:
+        entities.append(MessageEntityCustomEmoji(offset=_u16(text, tail_start + len(tail) + 1),
+                                                 length=2, document_id=INDI_EXCL))
+    await account.send(chat, text, entities)
+    log(f"✅ SENT ENTRY indi ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
         f"→ chat {chat} via {account.name}")
 
 
