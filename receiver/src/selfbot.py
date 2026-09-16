@@ -532,42 +532,58 @@ def _fmt_limit_price(v, digits):
 
 
 async def send_limit(account, sig):
-    """Kirim pesan pending order (BUY LIMIT / SELL LIMIT)."""
+    fmt = route_format(sig)
+    if fmt == "run50":
+        return await send_limit_run50(account, sig)
+    if fmt == "indi":
+        return await send_limit_indi(account, sig)
+    return await _send_limit_default(account, sig)
+
+
+def _limit_parts(sig):
+    """Hitung header zona + SL price untuk pesan LIMIT (dipakai 3 template).
+    Return (sym, typ, digits, header, sl_price)."""
     sym = clean_sym(sig.get("symbol"))
     typ = str(sig.get("type_") or sig.get("type") or "BUY").upper()
     digits = int(sig.get("digits", 2))
-    chat = resolve_chat(account, sig)
 
-    price = sig.get("price") or 0
+    base = float(sig.get("price") or 0)
     area_range = float(sig.get("area_range", 2))
-    sl_dist = float(sig.get("sl_distance", 5))
-
-    # Harga utama (limit price) & batas area
-    base = float(price)
     sl_actual = float(sig.get("sl") or 0)
     # SL OTOMATIS: total 60 pips dari limit price (SELALU, abaikan sl_distance)
     auto_sl = base + _pip_size(base, digits) * 60 if typ == "SELL" else base - _pip_size(base, digits) * 60
+    sl_price = sl_actual if sl_actual > 0 else auto_sl
     if typ == "BUY":
         # BUY LIMIT: zone DI BAWAH harga (price-area sampai price), tampil high-low
-        price_high = fmt_harga(base, digits)
-        price_low = fmt_harga(base - area_range, digits)
-        # SL ASLI dari MT5 kalau ada; fallback auto 60 pips
-        sl_price = sl_actual if sl_actual > 0 else auto_sl
-        header = f"| {price_high} - {price_low}"   # 4.477 - 4.475
+        header = f"| {fmt_harga(base, digits)} - {fmt_harga(base - area_range, digits)}"
     else:
         # SELL LIMIT: zone DI ATAS harga (price sampai price+area), tampil low-high
-        price_low = fmt_harga(base, digits)
-        price_high = fmt_harga(base + area_range, digits)
-        # SL ASLI dari MT5 kalau ada; fallback auto 60 pips
-        sl_price = sl_actual if sl_actual > 0 else auto_sl
-        header = f"| {price_low} - {price_high}"   # 4.594 - 4.596
+        header = f"| {fmt_harga(base, digits)} - {fmt_harga(base + area_range, digits)}"
+    return sym, typ, digits, header, sl_price
 
-    if typ == "BUY":
-        head_icon = "\U0001F4B0"  # 💰
-        emoji_id = BUY_EMOJI_ID
-    else:
-        head_icon = "\U0001F53D"  # 🔻
-        emoji_id = SELL_EMOJI_ID
+
+def _limit_entities(text, header, sl_price, digits):
+    """Entity umum pesan LIMIT: bold zona & SL (offset UTF-16)."""
+    entities = []
+    hdr_start = text.find(header)
+    if hdr_start >= 0:
+        entities.append(MessageEntityBold(offset=_u16(text, hdr_start),
+                                          length=_u16(text, hdr_start + len(header)) - _u16(text, hdr_start)))
+    sl_str = fmt_harga(sl_price, digits)
+    sl_start = text.find(f"SL : {sl_str}")
+    if sl_start >= 0:
+        entities.append(MessageEntityBold(offset=_u16(text, sl_start + 5),
+                                          length=_u16(text, sl_start + 5 + len(sl_str)) - _u16(text, sl_start + 5)))
+    return entities
+
+
+async def _send_limit_default(account, sig):
+    """Format LIMIT lama (route tanpa format): badge 💰/🔻, TP 3 : ⁉️."""
+    sym, typ, digits, header, sl_price = _limit_parts(sig)
+    chat = resolve_chat(account, sig)
+
+    emoji_id = SELL_EMOJI_ID if typ == "SELL" else BUY_EMOJI_ID
+    head_icon = "\U0001F53D" if typ == "SELL" else "\U0001F4B0"
 
     text = (
         f"{head_icon} {typ} LIMIT {sym} {header}\n"
@@ -576,21 +592,69 @@ async def send_limit(account, sig):
         f"TP 2 : 120 PIPS\n"
         f"TP 3 : \u2049\ufe0f"
     )
-    # Custom emoji BUY/SELL di posisi awal (2 char) — sama seperti send_entry
-    entities = []
-    entities.append(MessageEntityCustomEmoji(offset=0, length=2, document_id=emoji_id))
-
-    # Bold harga: header area (price_high - price_low) + SL
-    hdr_start = text.find(header)
-    if hdr_start >= 0:
-        entities.append(MessageEntityBold(offset=hdr_start, length=len(header)))
-    sl_str = fmt_harga(sl_price, digits)
-    sl_start = text.find(f"SL : {sl_str}")
-    if sl_start >= 0:
-        entities.append(MessageEntityBold(offset=sl_start + 5, length=len(sl_str)))
-
+    entities = [MessageEntityCustomEmoji(offset=0, length=2, document_id=emoji_id)]
+    entities += _limit_entities(text, header, sl_price, digits)
     await account.send(chat, text, entities)
     log(f"✅ SENT LIMIT ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
+        f"→ chat {chat} via {account.name}")
+
+
+async def send_limit_run50(account, sig):
+    """LIMIT format run50: badge 🔤🔤 (varian A), TP 2 baris, penutup RUN 50."""
+    sym, typ, digits, header, sl_price = _limit_parts(sig)
+    chat = resolve_chat(account, sig)
+
+    is_buy = typ != "SELL"
+    badge = RUN50_BUY_BADGE if is_buy else RUN50_SELL_BADGE
+    emoji2 = RUN50_EMOJI_2_BUY if is_buy else RUN50_EMOJI_2_SELL
+
+    text = (
+        f"🔤🔤 {typ} LIMIT {sym} {header}\n"
+        f"SL : {fmt_harga(sl_price, digits)}\n\n"
+        f"TP 1 : 60 PIPS\n"
+        f"TP 2 : 120 PIPS\n\n"
+        f"RUN 50 PIPS SET BE, JAGA RISK MANAGEMENT ‼️"
+    )
+    entities = [
+        MessageEntityCustomEmoji(offset=0, length=2, document_id=badge),
+        MessageEntityCustomEmoji(offset=2, length=2, document_id=emoji2),
+    ]
+    entities += _limit_entities(text, header, sl_price, digits)
+    tail = "RUN 50 PIPS SET BE, JAGA RISK MANAGEMENT"
+    tail_start = text.find(tail + " ‼️")
+    if tail_start >= 0:
+        entities.append(MessageEntityCustomEmoji(offset=_u16(text, tail_start + len(tail) + 1),
+                                                 length=2, document_id=RUN50_EXCL))
+    await account.send(chat, text, entities)
+    log(f"✅ SENT LIMIT run50 ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
+        f"→ chat {chat} via {account.name}")
+
+
+async def send_limit_indi(account, sig):
+    """LIMIT format indi: badge 📈/📉, penutup JANGAN LUPA ATUR RISK MANAGEMENT."""
+    sym, typ, digits, header, sl_price = _limit_parts(sig)
+    chat = resolve_chat(account, sig)
+
+    is_buy = typ != "SELL"
+    badge = INDI_BUY_BADGE if is_buy else INDI_SELL_BADGE
+    badge_char = "\U0001F4C8" if is_buy else "\U0001F4C9"
+
+    text = (
+        f"{badge_char} {typ} LIMIT {sym} {header}\n"
+        f"SL : {fmt_harga(sl_price, digits)}\n\n"
+        f"TP 1 : 60 PIPS\n"
+        f"TP 2 : 120 PIPS\n\n"
+        f"JANGAN LUPA ATUR RISK MANAGEMENT ‼️"
+    )
+    entities = [MessageEntityCustomEmoji(offset=0, length=2, document_id=badge)]
+    entities += _limit_entities(text, header, sl_price, digits)
+    tail = "JANGAN LUPA ATUR RISK MANAGEMENT"
+    tail_start = text.find(tail + " ‼️")
+    if tail_start >= 0:
+        entities.append(MessageEntityCustomEmoji(offset=_u16(text, tail_start + len(tail) + 1),
+                                                 length=2, document_id=INDI_EXCL))
+    await account.send(chat, text, entities)
+    log(f"✅ SENT LIMIT indi ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
         f"→ chat {chat} via {account.name}")
 
 

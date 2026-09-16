@@ -200,6 +200,15 @@ def mt5_connect():
             if info is not None and info.connected:
                 acct = mt5.account_info()
                 login_info = f"#{acct.login} ({acct.server})" if acct else "?"
+                # Validasi akun: lib MT5 bisa nyangkut ke terminal LAIN yang
+                # kebetulan jalan (creds diabaikan kalau terminal sudah login).
+                # Salah monitor = sinyal akun salah source — jangan diterima.
+                if acct and acct.login != creds["login"]:
+                    log(f"❌ SALAH TERMINAL: konek ke {login_info}, tapi config "
+                        f"mau #{creds['login']}. Shutdown & retry...")
+                    mt5.shutdown()
+                    time.sleep(2)
+                    continue
                 log(f"✅ MT5 CONNECT + LOGIN OK: {login_info}")
                 if CONFIG["settings"].get("notify_restart") and _state.get("was_running"):
                     send_notice("⚠️ MT5 terminal auto-restarted oleh watchdog")
@@ -210,19 +219,20 @@ def mt5_connect():
 
         time.sleep(5)
 
-    # Fallback: coba launch manual via subprocess (kalau initialize path gagal)
+    # Fallback: launch manual via subprocess (kalau initialize path gagal).
+    # WAJIB bawa flag /portable kalau config portable — tanpa itu terminal
+    # duplikat non-portable nyala & rebutan IPC dengan instance portable.
     if terminal_path and os.path.exists(terminal_path):
         log("🚀 Fallback: launch terminal manual via subprocess...")
         try:
-            subprocess.Popen([terminal_path])
+            cmd = [terminal_path] + (["/portable"] if CONFIG["mt5"].get("portable") else [])
+            subprocess.Popen(cmd)
             time.sleep(10)
-            if mt5.initialize(**creds):
+            if mt5.initialize(terminal_path, **creds):
                 log("✅ Fallback connect OK")
                 return True
         except Exception as e:
             log(f"❌ Fallback launch error: {e}")
-
-    return False
 
 
 # ============================================================
