@@ -33,6 +33,7 @@ from telethon import TelegramClient
 from telethon.errors import FloodWaitError
 from telethon.tl.functions.messages import SendMessageRequest as SendReq
 from telethon.tl.types import (
+    InputReplyToMessage,
     MessageEntityBold,
     MessageEntityCustomEmoji,
     MessageEntityItalic,
@@ -110,17 +111,17 @@ class Account:
         self.entity_cache[chat_id] = ent
         return ent
 
+
     async def send(self, chat_id, text, entities=None, topic_id=None):
-        kwargs = {}
-        if topic_id:
-            # Topik forum: balas ke pesan service topik (message_id == topic_id)
-            kwargs["reply_to"] = topic_id
+        # Topik forum: reply_to WAJIB objek InputReplyToMessage (bukan int) —
+        # int polos bikin TL request gak valid ("a TLObject was expected").
+        reply_to = InputReplyToMessage(reply_to_msg_id=topic_id) if topic_id else None
         await self.client(SendReq(
             peer=await self.get_peer(chat_id),
             message=text,
             entities=entities or [],
             random_id=random.randrange(-2 ** 63, 2 ** 63),
-            **kwargs,
+            reply_to=reply_to,
         ))
         self.sent_count += 1
 
