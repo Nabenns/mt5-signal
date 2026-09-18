@@ -110,12 +110,17 @@ class Account:
         self.entity_cache[chat_id] = ent
         return ent
 
-    async def send(self, chat_id, text, entities=None):
+    async def send(self, chat_id, text, entities=None, topic_id=None):
+        kwargs = {}
+        if topic_id:
+            # Topik forum: balas ke pesan service topik (message_id == topic_id)
+            kwargs["reply_to"] = topic_id
         await self.client(SendReq(
             peer=await self.get_peer(chat_id),
             message=text,
             entities=entities or [],
             random_id=random.randrange(-2 ** 63, 2 ** 63),
+            **kwargs,
         ))
         self.sent_count += 1
 
@@ -341,7 +346,7 @@ async def send_entry(account, sig):
         entities.append(MessageEntityBold(offset=_u16(text, sl_start + 5),
                                           length=_u16(text, sl_start + 5 + len(sl_str)) - _u16(text, sl_start + 5)))
 
-    await account.send(chat, text, entities)
+    await account.send(chat, text, entities, topic_id=sig.get("topic_id"))
     log(f"✅ SENT ENTRY ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
         f"→ chat {chat} via {account.name}")
 
@@ -413,7 +418,7 @@ async def send_entry_run50(account, sig):
     if tail_start >= 0:
         entities.append(MessageEntityCustomEmoji(offset=_u16(text, tail_start + len(tail) + 1),
                                                  length=2, document_id=RUN50_EXCL))
-    await account.send(chat, text, entities)
+    await account.send(chat, text, entities, topic_id=sig.get("topic_id"))
     log(f"✅ SENT ENTRY run50 ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
         f"→ chat {chat} via {account.name}")
 
@@ -481,7 +486,7 @@ async def send_entry_indi(account, sig):
     if tail_start >= 0:
         entities.append(MessageEntityCustomEmoji(offset=_u16(text, tail_start + len(tail) + 1),
                                                  length=2, document_id=INDI_EXCL))
-    await account.send(chat, text, entities)
+    await account.send(chat, text, entities, topic_id=sig.get("topic_id"))
     log(f"✅ SENT ENTRY indi ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
         f"→ chat {chat} via {account.name}")
 
@@ -511,7 +516,7 @@ async def send_sltp(account, sig):
             entities.append(MessageEntityBold(offset=price_start, length=len(val)))
             offset = price_start + len(val)
 
-    await account.send(chat, text, entities)
+    await account.send(chat, text, entities, topic_id=sig.get("topic_id"))
     log(f"✅ SENT SLTP: {text} → chat {chat} via {account.name}")
 
 
@@ -594,7 +599,7 @@ async def _send_limit_default(account, sig):
     )
     entities = [MessageEntityCustomEmoji(offset=0, length=2, document_id=emoji_id)]
     entities += _limit_entities(text, header, sl_price, digits)
-    await account.send(chat, text, entities)
+    await account.send(chat, text, entities, topic_id=sig.get("topic_id"))
     log(f"✅ SENT LIMIT ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
         f"→ chat {chat} via {account.name}")
 
@@ -625,7 +630,7 @@ async def send_limit_run50(account, sig):
     if tail_start >= 0:
         entities.append(MessageEntityCustomEmoji(offset=_u16(text, tail_start + len(tail) + 1),
                                                  length=2, document_id=RUN50_EXCL))
-    await account.send(chat, text, entities)
+    await account.send(chat, text, entities, topic_id=sig.get("topic_id"))
     log(f"✅ SENT LIMIT run50 ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
         f"→ chat {chat} via {account.name}")
 
@@ -653,7 +658,7 @@ async def send_limit_indi(account, sig):
     if tail_start >= 0:
         entities.append(MessageEntityCustomEmoji(offset=_u16(text, tail_start + len(tail) + 1),
                                                  length=2, document_id=INDI_EXCL))
-    await account.send(chat, text, entities)
+    await account.send(chat, text, entities, topic_id=sig.get("topic_id"))
     log(f"✅ SENT LIMIT indi ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
         f"→ chat {chat} via {account.name}")
 
@@ -742,7 +747,7 @@ async def flush_once(accounts):
                 text = s.get("text", "")
                 if text:
                     chat = resolve_chat(acc, s)
-                    await acc.send(chat, text, [])
+                    await acc.send(chat, text, [], topic_id=s.get("topic_id"))
                     log(f"✅ SENT NOTICE: {text[:80]} → chat {chat} via {acc.name}")
         else:
             async def sender(acc, s):

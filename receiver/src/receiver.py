@@ -250,7 +250,8 @@ def route_targets(sig):
 
 
 def _apply_route(item, route):
-    """Tempel chat_id/account/route ke satu item queue."""
+    """Tempel chat_id/account/format/topic ke satu item queue.
+    topic_id = topik forum (subchannel) — opsional, dipakai grup ber-topik."""
     cid = route.get("chat_id")
     if cid:
         try:
@@ -263,6 +264,12 @@ def _apply_route(item, route):
     fmt = str(route.get("format") or "").strip()
     if fmt:
         item["format"] = fmt.lower()
+    tid = route.get("topic_id")
+    if tid:
+        try:
+            item["topic_id"] = int(tid)
+        except (TypeError, ValueError):
+            pass
     item["route"] = str(route.get("name") or ("test" if route.get("test") else "prod"))
 
 
