@@ -462,6 +462,10 @@ def on_sltp(st, d):
     if act and act.get("position") == position:
         if sl == 0 and tp == 0:
             return {"status": "ignored", "reason": "sltp_zero"}
+        # SLTP cuma SEKALI per posisi — geser SL/TP berikutnya diabaikan diam-diam
+        if act.get("sltp_sent"):
+            log(f"ℹ️ SLTP {symbol} pos {position} diabaikan (sudah pernah dikirim)")
+            return {"status": "ignored", "reason": "sltp_already_sent"}
         # Kirim SLTP terpisah (entry udah dikirim duluan)
         sig = {
             "symbol": symbol,
@@ -474,6 +478,7 @@ def on_sltp(st, d):
             "source": d.get("source"),  # ikut routing per source
         }
         enqueue_sltp(sig, 0)  # kirim langsung, tanpa delay
+        act["sltp_sent"] = True
         # Clear waiting marker
         act.pop("waiting_sltp", None)
         log(f"📤 SLTP sent separately: {symbol} SL={sl} TP={tp}")
