@@ -290,6 +290,8 @@ def _u16(text, pos):
 
 
 async def send_entry(account, sig):
+    if route_format(sig) == "vip":
+        return await send_entry_vip(account, sig)
     if route_format(sig) == "run50":
         return await send_entry_run50(account, sig)
     if route_format(sig) == "indi":
@@ -539,12 +541,13 @@ def _fmt_limit_price(v, digits):
 
 async def send_limit(account, sig):
     fmt = route_format(sig)
+    if fmt == "vip":
+        return await send_limit_vip(account, sig)
     if fmt == "run50":
         return await send_limit_run50(account, sig)
     if fmt == "indi":
         return await send_limit_indi(account, sig)
     return await _send_limit_default(account, sig)
-
 
 def _limit_parts(sig):
     """Hitung header zona + SL price untuk pesan LIMIT (dipakai 3 template).
@@ -661,6 +664,97 @@ async def send_limit_indi(account, sig):
                                                  length=2, document_id=INDI_EXCL))
     await account.send(chat, text, entities, topic_id=sig.get("topic_id"))
     log(f"✅ SENT LIMIT indi ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
+        f"→ chat {chat} via {account.name}")
+
+
+# Custom emoji format "vip" (VIP | FOR BROTHER, topic vip-signal) — dari
+# pesan referensi DM @kokomelonsss (msg 2195, 09-20): badge 💰/🔻, TP 3 : ⁉️,
+# penutup 2 baris 'JAGA RISK KALIAN GUYS ‼️' + '50 PIPS SET BE OR PARTIAL ✔️'.
+# Emoji penutup custom/bergerak: ⁉️ ‼️ ✔️ pakai document_id referensi.
+VIP_EXCL_Q = 5314504236132747481          # ⁉️ custom (TP 3)
+VIP_EXCL = 5440660757194744323            # ‼️ custom (penutup, sama dgn run50/indi)
+VIP_CHECK = 5206607081334906820           # ✔️ custom (baris 50 PIPS SET BE)
+
+
+def _vip_entities(text, badge_emoji_id, header, sl_price, digits, is_limit):
+    """Entity umum format vip: badge + bold zona & SL + emoji custom penutup."""
+    entities = []
+    if badge_emoji_id:
+        entities.append(MessageEntityCustomEmoji(offset=0, length=2, document_id=badge_emoji_id))
+    hdr_start = text.find(header)
+    if hdr_start >= 0:
+        entities.append(MessageEntityBold(offset=_u16(text, hdr_start),
+                                          length=_u16(text, hdr_start + len(header)) - _u16(text, hdr_start)))
+    sl_str = fmt_harga(sl_price, digits)
+    sl_start = text.find(f"SL : {sl_str}")
+    if sl_start >= 0:
+        entities.append(MessageEntityBold(offset=_u16(text, sl_start + 5),
+                                          length=_u16(text, sl_start + 5 + len(sl_str)) - _u16(text, sl_start + 5)))
+    tail = "JAGA RISK KALIAN GUYS"
+    tail_start = text.find(tail + " ‼️")
+    if tail_start >= 0:
+        entities.append(MessageEntityCustomEmoji(offset=_u16(text, tail_start + len(tail) + 1),
+                                                 length=2, document_id=VIP_EXCL))
+    be = "50 PIPS SET BE OR PARTIAL"
+    be_start = text.find(be + " ✔️")
+    if be_start >= 0:
+        entities.append(MessageEntityCustomEmoji(offset=_u16(text, be_start + len(be) + 1),
+                                                 length=2, document_id=VIP_CHECK))
+    if is_limit:
+        q = "TP 3 : \u2049\ufe0f"
+        q_start = text.find(q)
+        if q_start >= 0:
+            entities.append(MessageEntityCustomEmoji(offset=_u16(text, q_start + len("TP 3 : ")),
+                                                     length=2, document_id=VIP_EXCL_Q))
+    return entities
+
+
+async def send_entry_vip(account, sig):
+    """ENTRY format vip: badge 💰/🔻, TP 1/TP 2/TP 3 : ⁉️, penutup 2 baris."""
+    sym, typ, digits, header, sl_price = _limit_parts(sig)
+    chat = resolve_chat(account, sig)
+
+    is_buy = typ != "SELL"
+    emoji_id = BUY_EMOJI_ID if is_buy else SELL_EMOJI_ID
+    head_icon = "\U0001F4B0" if is_buy else "\U0001F53D"
+
+    text = (
+        f"{head_icon} {typ} NOW {sym} {header}\n"
+        f"SL : {fmt_harga(sl_price, digits)}\n\n"
+        f"TP 1 : 60 PIPS\n"
+        f"TP 2 : 120 PIPS\n"
+        f"TP 3 : \u2049\ufe0f\n\n"
+        f"JAGA RISK KALIAN GUYS ‼️\n"
+        f"50 PIPS SET BE OR PARTIAL ✔️"
+    )
+    entities = _vip_entities(text, emoji_id, header, sl_price, digits, is_limit=False)
+    await account.send(chat, text, entities, topic_id=sig.get("topic_id"))
+    log(f"✅ SENT ENTRY vip ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
+        f"→ chat {chat} via {account.name}")
+
+
+async def send_limit_vip(account, sig):
+    """LIMIT format vip: persis pesan referensi (badge 💰/🔻, TP 3 : ⁉️,
+    penutup JAGA RISK KALIAN GUYS ‼️ + 50 PIPS SET BE OR PARTIAL ✔️)."""
+    sym, typ, digits, header, sl_price = _limit_parts(sig)
+    chat = resolve_chat(account, sig)
+
+    is_buy = typ != "SELL"
+    emoji_id = BUY_EMOJI_ID if is_buy else SELL_EMOJI_ID
+    head_icon = "\U0001F4B0" if is_buy else "\U0001F53D"
+
+    text = (
+        f"{head_icon} {typ} LIMIT {sym} {header}\n"
+        f"SL : {fmt_harga(sl_price, digits)}\n\n"
+        f"TP 1 : 60 PIPS\n"
+        f"TP 2 : 120 PIPS\n"
+        f"TP 3 : \u2049\ufe0f\n\n"
+        f"JAGA RISK KALIAN GUYS ‼️\n"
+        f"50 PIPS SET BE OR PARTIAL ✔️"
+    )
+    entities = _vip_entities(text, emoji_id, header, sl_price, digits, is_limit=True)
+    await account.send(chat, text, entities, topic_id=sig.get("topic_id"))
+    log(f"✅ SENT LIMIT vip ({typ}): {sym} {header} SL {fmt_harga(sl_price, digits)} "
         f"→ chat {chat} via {account.name}")
 
 
