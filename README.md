@@ -25,14 +25,19 @@ Sistem relay sinyal trading dari **MetaTrader 5 → VPS Receiver → Telegram** 
 
 ```
 receiver/
-  src/receiver.py               HTTP server receiver (PORT 3203)
-  src/selfbot.py                Pengirim Telegram (Telethon)
-  src/signal_detector.py        Detector sinyal MT5 (Python, jalan di RDP)
-  config/detector_config.example.json   Config detector (copy -> detector_config.json di VPS)
-  config/config.example.json    Config detector RDP (copy -> config.json sebelah script)
-  scripts/install_task.bat      Install scheduled task Windows (auto-start)
+  src/receiver.py               HTTP server receiver (PORT 3203) — v13, multi akun/multi channel
+  src/selfbot.py                Pengirim Telegram (Telethon) — v11, 1 client per akun + template format
+  src/signal_detector.py        Detector sinyal MT5 (Python, jalan di RDP) — 1 script, N instance (--config)
+  src/login.py                  Login akun Telegram baru (OTP + 2FA) → telegram_config.json
+  config/detector_config.example.json   Template config detector (dikelola via API, per source)
+  config/config.example.json    Template config instance detector di RDP (source/test/portable)
+  config/telegram_config.example.json   Template accounts + routes
   scripts/run.bat               Jalankan receiver (foreground)
-  README.md                     Panduan setup receiver
+  scripts/run_vip.bat           Jalankan instance detector kedua (--config config_vip.json)
+  scripts/install_task.bat      Install scheduled task Windows (auto-start)
+  README.md                     Panduan setup receiver/detector
+setup.sh                        Cek service + route PROD/TEST/VIP + panduan RDP
+BIGGUY-MONITORING.md            Panduan read-only buat AI Big Guy MS (monitoring)
 ```
 
 ## Setup Cepat
@@ -57,11 +62,16 @@ EOF
 python src/receiver.py   # stdlib murni, tidak ada dep eksternal
 ```
 
+Catatan produksi: receiver + selfbot jalan sebagai service systemd (`mt5-signal-receiver`,
+`mt5-signal-selfbot`) di `/root/mt5-signal/` dengan layout FLAT (file langsung di root,
+bukan `src/`). Path BASE receiver adaptif (deteksi folder `src/`), jadi kode yang sama
+jalan di dua layout — jangan diubah jadi hardcoded.
+
 ### 3. Selfbot (di VPS / tempat lain)
 ```bash
 cd receiver
 pip install telethon
-# edit src/selfbot.py — API_ID, API_HASH, TG_CHAT_ID sesuai akun kamu
+# akun + channel dikelola lewat telegram_config.json (lihat bagian Multi Akun di bawah)
 python src/selfbot.py
 ```
 
@@ -70,15 +80,21 @@ Big Guy MS `/signal-monitor/` men-stream dari receiver via `/api/health` + SSE.
 
 ## API Receiver
 
-| Endpoint | Method | Deskripsi |
-|---|---|---|
-| `/api/signal` | POST | Terima sinyal dari detector (X-Signal-Secret) |
-| `/api/health` | GET | Status, statistik queue/lock |
-| `/api/positions` | GET | Daftar posisi aktif |
-| `/api/logs` | GET | Log terakhir |
-| `/api/config/detector` | GET/POST | Baca/tulis config detector (auth) |
-| `/api/config/detector/checksum` | GET | Checksum config (untuk polling detector) |
-| `/api/reset` | POST | Reset system (safety check posisi aktif) |
+| Endpoint | Method | Auth | Deskripsi |
+|---|---|---|---|
+| `/api/signal` | POST | ya | Terima sinyal dari detector (X-Signal-Secret) |
+| `/api/health` | GET | tidak | Status, statistik queue/lock |
+| `/api/positions` | GET | tidak | Daftar posisi aktif (lock) — output menyertakan `source` |
+| `/api/logs` | GET | tidak | 100 log terakhir (param limit diabaikan) |
+| `/api/config/detector[?source=&mask=1]` | GET/POST | ya | Baca/tulis config detector (per source) |
+| `/api/config/detector/checksum[?source=]` | GET | tidak | Checksum config (dipoll detector tiap 30s) |
+| `/api/config/telegram[?mask=1]` | GET/POST | ya | Baca/tulis accounts + routes |
+| `/api/config/telegram/checksum` | GET | tidak | Checksum telegram config (selfbot hot-reload) |
+| `/api/reset` | POST | ya | Reset system (`?force=true` buat lewati safety lock) |
+
+Catatan: `source` pada config detector = instance detector (mis. `vip` → file `detector_config_vip.json`).
+`/api/state` **tidak ada di receiver** (dipakai sebagian konsumen dashboard — lihat BIGGUY-MONITORING.md).
+
 
 ## Format Sinyal
 

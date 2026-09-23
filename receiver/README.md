@@ -71,20 +71,28 @@ schtasks /query /tn "MT5 Signal Detector"
 
 ## ⚙️ Configuration Options
 
-In `config.json`:
+In `config.json` (instance detector di RDP):
 
 | Field | Example | Description |
 |-------|---------|-------------|
-| `login` | 12345678 | Your MT5 account |
-| `password` | "yourpass" | Password |
-| `server` | "Broker-SERVER" | Broker server name |
-| `terminal_path` | `"C:\\Program Files\\MetaTrader 5\\terminal64.exe"` | Full path (optional) |
-| `receiver_url` | `"https://hirmes.bensserver.cloud/api/signal"` | HTTP endpoint on VPS |
-| `secret` | "***..."*** | RECEIVER_SECRET from VPS `.env` |
-| `poll_interval` | 1.0 | Seconds between polls (default: 1s) |
-| `health_interval` | 60 | Seconds between health checks |
-| `startup_seed_minutes` | 5 | Ignore deals older than X min at startup (avoid duplicates) |
-| `notify_restart` | true | Send Telegram notice when MT5 auto-restarted |
+| `login` | 12345678 | Akun MT5 instance ini |
+| `password` | `"yourpass"` | Password |
+| `server` | `"Broker-SERVER"` | Nama server broker |
+| `terminal_path` | `"C:\\Program Files\\MetaTrader 5\\terminal64.exe"` | Full path terminal instance ini |
+| `portable` | `true` | WAJIB true kalau ada >1 terminal MT5 di satu box (data folder terpisah) |
+| `source` | `""` / `"vip"` | Identitas instance → menentukan route tujuan (jangan ketimpa remote) |
+| `test` | `false` | `true` = SEMUA sinyal instance ini ke channel test (dipakai saat uji akun baru) |
+| `receiver_url` | `"https://hirmes.bensserver.cloud/api/signal"` | HTTP endpoint receiver |
+| `secret` | `"***..."` | RECEIVER_SECRET dari `.env` VPS |
+| `poll_interval` | 1.0 | Detik antar poll (default 1s) |
+| `health_interval` | 60 | Detik antar health check |
+| `startup_seed_minutes` | 5 | Abaikan deal lebih tua dari X menit saat start (anti duplikat) |
+| `notify_restart` | true | Kirim notice Telegram saat MT5 auto-restart |
+
+Field `mt5.*`, `settings.*` bisa dikelola dari VPS (`/api/config/detector`); `source`,
+`test`, `receiver_url`, `secret`, `portable` adalah identitas lokal instance dan
+**tidak pernah** ditimpa oleh pull config remote.
+
 
 ## 🐛 Troubleshooting
 
@@ -131,8 +139,23 @@ Selfbot v11 + receiver mendukung **banyak akun Telegram** dan **banyak channel t
 ```
 
 - **accounts** — tiap akun = satu session Telethon (`login.py` yang bikin). `default: true` = akun pengirim utama.
-- **routes** — channel tujuan. Route `test: true` cuma kepakai kalau sinyal bawa flag `test` (proteksi nyasar tetap berlaku). `account` = pin akun pengirim (opsional). Sinyal non-test di-**fanout ke semua route non-test** yang enabled.
+- **routes** — channel tujuan. Route `test: true` cuma kepakai kalau sinyal bawa flag `test` (proteksi nyasar tetap berlaku). `account` = pin akun pengirim (opsional). Sinyal non-test di-**fanout ke semua route non-test** yang enabled **dengan `source` yang sama** (route tanpa `source` = `public`; source non-public tanpa route = DIBUANG, anti-bocor).
+- Field route opsional lain: `topic_id` (kirim sebagai reply ke topik forum), `format` (template pesan — lihat tabel di bawah).
 - Tanpa config file → perilaku lama (1 akun legacy, PROD/TEST hardcode).
+
+### Template format pesan (`format` per route)
+
+| `format` | Dipakai untuk | Isi pesan |
+|---|---|---|
+| (kosong) / `default` | channel publik | `💰 BUY NOW SYMBOL \| zona`, SL bold, `TP 1/2/3 : ⁉️` |
+| `vip` | VIP For Brother (topik) | sama seperti default + penutup 2 baris `JAGA RISK KALIAN GUYS ‼️` / `50 PIPS SET BE OR PARTIAL ✔️` |
+| `run50` | crazypauls | badge custom 🔤🔤, TP 2 baris, penutup `RUN 50 PIPS SET BE, JAGA RISK MANAGEMENT ‼️` |
+| `indi` | indicatorisme | badge custom 📈/📉, `TP : 60 PIPS` (tanpa nomor), penutup `JANGAN LUPA ATUR RISK MANAGEMENT ‼️` |
+
+Semua template LIMIT pakai varian yang sama; SL otomatis 60 pips dari harga kalau SL dari MT5 kosong.
+Offset entity dihitung dalam unit UTF-16 (`_u16`) — jangan diganti index Python biasa,
+emoji astral bikin bold/emoji custom geser dan di-strip server Telegram.
+
 
 ### Kelola via API (tanpa SSH)
 
@@ -174,8 +197,14 @@ Satu script, banyak instance — tiap akun MT5 satu config. Contoh setup 2 akun:
 
 1. Copy `config.example.json` → `config_vip.json`. Isi kredensial MT5 akun B + **`"source": "vip"`**.
 2. Jalankan: `python signal_detector.py --config config_vip.json` (atau double-click `scripts/run_vip.bat`).
-3. Tiap instance punya state/log/health sendiri (`detector_state_vip.json`, `detector_vip.log`, `health_vip.json`) — gak tabrakan.
-4. Remote config juga terpisah: instance VIP poll `?source=vip` → file `detector_config_vip.json` di VPS (edit via API yang sama dengan `?source=vip`).
+3. Tiap instance punya file sendiri, namanya ikut **nama file config** (`config` → default, `config_vip` → suffix `_config_vip`):
+   | Instance | State | Log | Health | Checksum |
+   |---|---|---|---|---|
+   | `config.json` | `detector_state.json` | `detector.log` | `health.json` | `config_checksums.json` |
+   | `config_vip.json` | `detector_state_config_vip.json` | `detector_config_vip.log` | `health_config_vip.json` | `config_checksumsconfig_vip.json` |
+   Jadi jangan bingung kalau log-nya bernama `detector_config_vip.log` — itu memang pasangan `config_vip.json`.
+4. Remote config juga terpisah: instance VIP poll `?source=vip` → file `detector_config_vip.json` di VPS (edit via API yang sama dengan `?source=vip`). Kalau file itu belum ada di VPS, pull-nya no-op (config VIP murni lokal di RDP).
+
 
 ### Receiver (otomatis)
 
